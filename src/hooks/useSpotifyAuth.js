@@ -70,14 +70,14 @@ export function useSpotifyAuth() {
   const login = async () => {
     try {
       setError(null);
-      // Use Supabase OAuth provider for Spotify. Supabase handles redirect.
-      await supabase.auth.signInWithOAuth({
-        provider: 'spotify',
-        options: {
-          redirectTo: SPOTIFY_CONFIG.REDIRECT_URI,
-          scopes: SPOTIFY_CONFIG.SCOPES,
-        },
-      });
+      // Use Supabase OAuth provider for Spotify.
+      // In development we pass a redirectTo (localhost). In production let Supabase
+      // handle the redirect/callback to avoid forcing localhost in deployed builds.
+      const options = import.meta.env.DEV
+        ? { redirectTo: SPOTIFY_CONFIG.REDIRECT_URI, scopes: SPOTIFY_CONFIG.SCOPES }
+        : { scopes: SPOTIFY_CONFIG.SCOPES };
+
+      await supabase.auth.signInWithOAuth({ provider: 'spotify', options });
     } catch (err) {
       console.error('Error during login (supabase oauth):', err);
       setError('Error al iniciar sesión. Por favor, intenta nuevamente.');
