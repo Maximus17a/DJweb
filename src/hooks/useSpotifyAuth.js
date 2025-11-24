@@ -101,8 +101,6 @@ export function useSpotifyAuth() {
 
       // Limpiar el estado después de la verificación exitosa
       localStorage.removeItem('spotify_auth_state');
-        throw new Error('State mismatch - possible CSRF attack');
-      }
       
       // Obtener code verifier
       const codeVerifier = getCodeVerifier();
