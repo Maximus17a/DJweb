@@ -92,7 +92,10 @@ export async function getAudioFeatures(trackId) {
     );
     return response.data;
   } catch (error) {
-    console.error('Error fetching audio features:', error);
+    // Silently fail or warn, let the caller handle it
+    if (error.response && error.response.status !== 403) {
+      console.warn('Error fetching audio features:', error);
+    }
     throw error;
   }
 }
@@ -112,18 +115,27 @@ export async function getMultipleAudioFeatures(trackIds) {
     
     const allFeatures = [];
     for (const chunk of chunks) {
-      const response = await spotifyAxios.get(SPOTIFY_API.ENDPOINTS.AUDIO_FEATURES, {
-        params: {
-          ids: chunk.join(','),
-        },
-      });
-      allFeatures.push(...response.data.audio_features);
+      try {
+        const response = await spotifyAxios.get(SPOTIFY_API.ENDPOINTS.AUDIO_FEATURES, {
+          params: {
+            ids: chunk.join(','),
+          },
+        });
+        allFeatures.push(...response.data.audio_features);
+      } catch (err) {
+        console.warn('Failed to fetch chunk of audio features', err);
+        // Push nulls for this chunk to maintain index alignment if possible, 
+        // or just ignore. But caller expects alignment.
+        // If we can't get features, we should probably push nulls.
+        allFeatures.push(...new Array(chunk.length).fill(null));
+      }
     }
     
     return allFeatures;
   } catch (error) {
-    console.error('Error fetching multiple audio features:', error);
-    throw error;
+    console.warn('Error fetching multiple audio features:', error);
+    // Return array of nulls instead of throwing to prevent app crash
+    return new Array(trackIds.length).fill(null);
   }
 }
 

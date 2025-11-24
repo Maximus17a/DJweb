@@ -17,12 +17,17 @@ export default function Dashboard() {
       let trackWithFeatures = { ...track };
       
       try {
-        // Intentar obtener audio features
-        const features = await getAudioFeatures(track.id);
-        trackWithFeatures.audioFeatures = features;
+        // Intentar obtener audio features solo si tenemos ID
+        if (track.id) {
+          const features = await getAudioFeatures(track.id);
+          if (features) {
+            trackWithFeatures.audioFeatures = features;
+          } else {
+             throw new Error('No features returned');
+          }
+        }
       } catch (featureError) {
-        console.warn('Could not fetch audio features, adding track without AI data:', featureError);
-        // Continuar sin features
+        // Silenciosamente ignorar error de features y usar defaults
         trackWithFeatures.audioFeatures = {
           tempo: 0,
           energy: 0,

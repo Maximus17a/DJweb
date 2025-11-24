@@ -150,12 +150,24 @@ export function PlayerProvider({ children }) {
       
       // Obtener audio features para todos los tracks
       const trackIds = queue.map(track => track.id);
-      const features = await getMultipleAudioFeatures(trackIds);
+      let features = [];
+      try {
+        features = await getMultipleAudioFeatures(trackIds);
+      } catch (err) {
+        console.warn('Could not fetch audio features for optimization', err);
+        features = new Array(trackIds.length).fill(null);
+      }
       
       // Añadir audio features a cada track
       const tracksWithFeatures = queue.map((track, index) => ({
         ...track,
-        audioFeatures: features[index],
+        audioFeatures: features[index] || {
+          tempo: 0,
+          energy: 0,
+          key: 0,
+          mode: 1,
+          danceability: 0
+        },
       }));
       
       // Optimizar usando el algoritmo de IA
