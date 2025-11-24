@@ -65,7 +65,7 @@ spotifyAxios.interceptors.request.use(
  */
 spotifyAxios.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error.response?.status;
 
     if (status === 401) {
