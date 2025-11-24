@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { Search, Loader2 } from 'lucide-react';
 import { searchTracks } from '../../services/spotifyApi';
 import { UI_CONFIG } from '../../utils/constants';
@@ -8,6 +8,8 @@ export default function SearchBar({ onTrackSelect }) {
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const resultsRef = useRef(null);
+  const [spacerHeight, setSpacerHeight] = useState(0);
 
   // Debounce search
   useEffect(() => {
@@ -24,7 +26,7 @@ export default function SearchBar({ onTrackSelect }) {
         setResults(tracks);
         setShowResults(true);
       } catch (error) {
-        console.error('Error searching:', error);
+        console.warn('Error searching:', error);
       } finally {
         setIsSearching(false);
       }
@@ -32,6 +34,15 @@ export default function SearchBar({ onTrackSelect }) {
 
     return () => clearTimeout(timer);
   }, [query]);
+
+  // Measure results height and update spacer so page content is pushed down
+  useLayoutEffect(() => {
+    if (resultsRef.current && showResults) {
+      setSpacerHeight(resultsRef.current.offsetHeight || 0);
+    } else {
+      setSpacerHeight(0);
+    }
+  }, [resultsRef, results.length, showResults]);
 
   const handleTrackClick = (track) => {
     onTrackSelect(track);
@@ -65,7 +76,10 @@ export default function SearchBar({ onTrackSelect }) {
 
       {/* Resultados */}
       {showResults && results.length > 0 && (
-        <div className="absolute z-[100] w-full mt-2 bg-gray-900/95 border border-neon-purple/30 backdrop-blur-xl rounded-xl overflow-hidden max-h-96 overflow-y-auto shadow-2xl shadow-black/50">
+        <div
+          ref={resultsRef}
+          className="absolute z-[100] w-full mt-2 bg-gray-900/95 border border-neon-purple/30 backdrop-blur-xl rounded-xl overflow-hidden max-h-96 overflow-y-auto shadow-2xl shadow-black/50"
+        >
           {results.map((track) => (
             <button
               key={track.id}
@@ -94,6 +108,11 @@ export default function SearchBar({ onTrackSelect }) {
             </button>
           ))}
         </div>
+      )}
+
+      {/* Spacer to push page content down so results don't appear behind other panels */}
+      {showResults && results.length > 0 && (
+        <div style={{ height: spacerHeight }} aria-hidden="true" />
       )}
     </div>
   );

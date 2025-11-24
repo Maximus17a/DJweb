@@ -142,7 +142,7 @@ export function PlayerProvider({ children }) {
   /**
    * Optimizar cola con IA
    */
-  const optimizeQueueWithAI = async () => {
+  const optimizeQueueWithAI = async (flowType = 'maintain') => {
     if (queue.length <= 1) return;
     
     try {
@@ -171,14 +171,14 @@ export function PlayerProvider({ children }) {
       }));
       
       // Optimizar usando el algoritmo de IA
-      const optimized = optimizeQueue(tracksWithFeatures, 'maintain');
+      const optimized = optimizeQueue(tracksWithFeatures, flowType);
       
       setQueue(optimized);
       setIsOptimizing(false);
       
       return optimized;
     } catch (error) {
-      console.error('Error optimizing queue:', error);
+        console.warn('Error optimizing queue:', error);
       setIsOptimizing(false);
       throw error;
     }
@@ -204,7 +204,7 @@ export function PlayerProvider({ children }) {
       setIsPaused(false);
       setIsActive(true);
     } catch (error) {
-      console.error('Error playing track:', error);
+      console.warn('Error playing track:', error);
     }
   };
 
@@ -217,7 +217,7 @@ export function PlayerProvider({ children }) {
     try {
       await player.togglePlay();
     } catch (error) {
-      console.error('Error toggling play:', error);
+      console.warn('Error toggling play:', error);
     }
   };
 

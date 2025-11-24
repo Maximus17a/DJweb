@@ -20,14 +20,15 @@ export default function Callback() {
       const error = params.get('error');
 
       if (error) {
-        console.error('OAuth error:', error);
+        console.warn('OAuth error:', error);
         navigate('/?error=' + error);
         return;
       }
 
       if (!code || !state) {
-        console.error('Missing code or state');
-        navigate('/?error=missing_params');
+        // Not necessarily an exceptional error — redirect quietly
+        console.warn('Missing code or state in callback');
+        navigate('/');
         return;
       }
 

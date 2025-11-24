@@ -1,10 +1,12 @@
-import { Sparkles, Trash2, Music } from 'lucide-react';
+import { Sparkles, Trash2, Music, Loader2 } from 'lucide-react';
+import { useState } from 'react';
 import { usePlayer } from '../../context/PlayerContext';
 import TrackList from '../Library/TrackList';
 import { analyzeQueue } from '../../utils/bpmMatcher';
 
 export default function QueueManager() {
   const { queue, optimizeQueueWithAI, clearQueue, removeFromQueue, isOptimizing } = usePlayer();
+  const [optError, setOptError] = useState(null);
 
   const stats = analyzeQueue(queue);
 
@@ -30,13 +32,34 @@ export default function QueueManager() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={optimizeQueueWithAI}
+              onClick={async () => {
+                setOptError(null);
+                try {
+                  await optimizeQueueWithAI();
+                } catch (err) {
+                  console.warn('Optimization failed:', err);
+                  setOptError('No se pudo optimizar la cola. Intenta iniciar sesión de nuevo.');
+                }
+              }}
               disabled={isOptimizing || queue.length <= 1}
               className="btn-neon-outline text-sm disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
             >
-              <Sparkles className="w-4 h-4" />
-              Optimizar con IA
+              {isOptimizing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Optimizando...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Optimizar con IA
+                </>
+              )}
             </button>
+
+            {optError && (
+              <p className="text-sm text-yellow-300 ml-2">{optError}</p>
+            )}
 
             <button
               onClick={clearQueue}

@@ -5,6 +5,7 @@ import BackgroundEffect from '../components/Layout/BackgroundEffect';
 import SearchBar from '../components/Library/SearchBar';
 import WebPlayback from '../components/Player/WebPlayback';
 import QueueManager from '../components/AI/QueueManager';
+import AIChat from '../components/AI/AIChat';
 import { usePlayer } from '../context/PlayerContext';
 import { getAudioFeatures } from '../services/spotifyApi';
 
@@ -66,6 +67,9 @@ export default function Dashboard() {
               </div>
               <SearchBar onTrackSelect={handleTrackSelect} />
             </div>
+
+            {/* Chat IA */}
+            <AIChat />
 
             {/* Cola de reproducción */}
             <QueueManager />

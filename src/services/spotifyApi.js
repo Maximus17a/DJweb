@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { SPOTIFY_API } from '../utils/constants';
+import { SPOTIFY_API, SPOTIFY_CONFIG, STORAGE_KEYS } from '../utils/constants';
 
 /**
  * Instancia de Axios configurada para la API de Spotify
@@ -33,16 +33,109 @@ spotifyAxios.interceptors.request.use(
 spotifyAxios.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Token expirado, limpiar y redirigir al login
-      localStorage.removeItem('spotify_access_token');
-      localStorage.removeItem('spotify_refresh_token');
-      localStorage.removeItem('spotify_token_expiry');
-      window.location.href = '/';
+    const status = error.response?.status;
+
+    if (status === 401) {
+      // Try to refresh the token using the refresh token stored in localStorage
+      const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+      if (!refreshToken) {
+        localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+        localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+        localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
+        window.location.href = '/';
+        return Promise.reject(error);
+      }
+
+      // Attempt refresh (synchronous chain)
+      return (async () => {
+        try {
+          const params = new URLSearchParams({
+            client_id: SPOTIFY_CONFIG.CLIENT_ID,
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+          });
+
+          const resp = await fetch(SPOTIFY_CONFIG.TOKEN_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString(),
+          });
+
+          if (!resp.ok) {
+            // can't refresh — force logout
+            localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+            localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+            localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
+            window.location.href = '/';
+            return Promise.reject(error);
+          }
+
+          const data = await resp.json();
+          const expiryTime = Date.now() + (data.expires_in * 1000);
+          localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
+          localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, expiryTime.toString());
+          if (data.refresh_token) {
+            localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token);
+          }
+
+          // Update the failed request with new token and retry
+          const originalRequest = error.config;
+          if (originalRequest && originalRequest.headers) {
+            originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
+          }
+
+          return spotifyAxios.request(originalRequest);
+        } catch (refreshErr) {
+          console.warn('Failed to refresh token:', refreshErr);
+          localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+          localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+          localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
+          window.location.href = '/';
+          return Promise.reject(refreshErr);
+        }
+      })();
     }
+
     return Promise.reject(error);
   }
 );
+
+/**
+ * Intenta refrescar el token usando el refresh token almacenado en localStorage.
+ * Actualiza localStorage con el nuevo access token si tiene éxito.
+ */
+async function attemptRefreshToken() {
+  const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+  if (!refreshToken) {
+    throw new Error('No refresh token available');
+  }
+
+  const params = new URLSearchParams({
+    client_id: SPOTIFY_CONFIG.CLIENT_ID,
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+  });
+
+  const resp = await fetch(SPOTIFY_CONFIG.TOKEN_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+
+  if (!resp.ok) {
+    throw new Error('Failed to refresh token');
+  }
+
+  const data = await resp.json();
+  const expiryTime = Date.now() + (data.expires_in * 1000);
+  localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
+  localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, expiryTime.toString());
+  if (data.refresh_token) {
+    localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token);
+  }
+
+  return data.access_token;
+}
 
 /**
  * Obtiene la información del usuario actual
@@ -75,8 +168,9 @@ export async function searchTracks(query, limit = 20) {
     });
     return response.data.tracks.items;
   } catch (error) {
-    console.error('Error searching tracks:', error);
-    throw error;
+    console.warn('Error searching tracks:', error);
+    // Return empty array so the UI can handle "no results" without breaking
+    return [];
   }
 }
 
@@ -92,11 +186,27 @@ export async function getAudioFeatures(trackId) {
     );
     return response.data;
   } catch (error) {
-    // Silently fail or warn, let the caller handle it
-    if (error.response && error.response.status !== 403) {
-      console.warn('Error fetching audio features:', error);
+    // If we get a 401/403, try refreshing the token once and retry
+    const status = error.response?.status;
+    if (status === 401 || status === 403) {
+      try {
+        await attemptRefreshToken();
+        const retryResp = await spotifyAxios.get(
+          `${SPOTIFY_API.ENDPOINTS.AUDIO_FEATURES}/${trackId}`
+        );
+        return retryResp.data;
+      } catch (retryErr) {
+        if (retryErr.response && retryErr.response.status === 403) {
+          console.warn('Audio features access forbidden for track', trackId);
+          return null;
+        }
+        console.warn('Retry failed fetching audio features:', retryErr);
+        return null;
+      }
     }
-    throw error;
+
+    console.warn('Error fetching audio features:', error);
+    return null;
   }
 }
 
@@ -124,9 +234,21 @@ export async function getMultipleAudioFeatures(trackIds) {
         allFeatures.push(...response.data.audio_features);
       } catch (err) {
         console.warn('Failed to fetch chunk of audio features', err);
-        // Push nulls for this chunk to maintain index alignment if possible, 
-        // or just ignore. But caller expects alignment.
-        // If we can't get features, we should probably push nulls.
+        const status = err.response?.status;
+        if (status === 401 || status === 403) {
+          try {
+            await attemptRefreshToken();
+            const retryResp = await spotifyAxios.get(SPOTIFY_API.ENDPOINTS.AUDIO_FEATURES, {
+              params: { ids: chunk.join(',') },
+            });
+            allFeatures.push(...retryResp.data.audio_features);
+            continue;
+          } catch (retryErr) {
+            console.warn('Retry failed for chunk of audio features', retryErr);
+          }
+        }
+
+        // Push nulls for this chunk to maintain index alignment
         allFeatures.push(...new Array(chunk.length).fill(null));
       }
     }
