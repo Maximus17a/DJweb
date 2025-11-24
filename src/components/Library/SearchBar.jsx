@@ -65,12 +65,12 @@ export default function SearchBar({ onTrackSelect }) {
 
       {/* Resultados */}
       {showResults && results.length > 0 && (
-        <div className="absolute z-[100] w-full mt-2 glass rounded-xl overflow-hidden max-h-96 overflow-y-auto">
+        <div className="absolute z-[100] w-full mt-2 bg-gray-900/95 border border-neon-purple/30 backdrop-blur-xl rounded-xl overflow-hidden max-h-96 overflow-y-auto shadow-2xl shadow-black/50">
           {results.map((track) => (
             <button
               key={track.id}
               onClick={() => handleTrackClick(track)}
-              className="w-full p-3 hover:bg-white/10 transition-colors flex items-center gap-3 text-left"
+              className="w-full p-3 hover:bg-neon-purple/10 transition-colors flex items-center gap-3 text-left border-b border-white/5 last:border-0"
             >
               {/* Album art */}
               <img

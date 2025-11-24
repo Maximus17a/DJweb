@@ -94,10 +94,13 @@ export function useSpotifyAuth() {
       
       // Verificar state para prevenir CSRF
       const savedState = localStorage.getItem('spotify_auth_state');
-      // Limpiar el estado inmediatamente después de la lectura para evitar reintentos fallidos
-      localStorage.removeItem('spotify_auth_state'); 
-
+      
       if (state !== savedState) {
+        throw new Error('State mismatch - possible CSRF attack');
+      }
+
+      // Limpiar el estado después de la verificación exitosa
+      localStorage.removeItem('spotify_auth_state');
         throw new Error('State mismatch - possible CSRF attack');
       }
       

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Loader2 } from 'lucide-react';
@@ -6,9 +6,13 @@ import { Loader2 } from 'lucide-react';
 export default function Callback() {
   const navigate = useNavigate();
   const { handleCallback } = useAuth();
+  const hasProcessed = useRef(false);
 
   useEffect(() => {
     const processCallback = async () => {
+      if (hasProcessed.current) return;
+      hasProcessed.current = true;
+
       // Obtener código y state de la URL
       const params = new URLSearchParams(window.location.search);
       const code = params.get('code');

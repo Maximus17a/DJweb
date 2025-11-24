@@ -14,12 +14,23 @@ export default function Dashboard() {
 
   const handleTrackSelect = async (track) => {
     try {
-      // Obtener audio features del track
-      const features = await getAudioFeatures(track.id);
-      const trackWithFeatures = {
-        ...track,
-        audioFeatures: features,
-      };
+      let trackWithFeatures = { ...track };
+      
+      try {
+        // Intentar obtener audio features
+        const features = await getAudioFeatures(track.id);
+        trackWithFeatures.audioFeatures = features;
+      } catch (featureError) {
+        console.warn('Could not fetch audio features, adding track without AI data:', featureError);
+        // Continuar sin features
+        trackWithFeatures.audioFeatures = {
+          tempo: 0,
+          energy: 0,
+          key: 0,
+          mode: 1,
+          danceability: 0
+        };
+      }
 
       await addToQueue(trackWithFeatures);
       
