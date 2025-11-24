@@ -65,7 +65,7 @@ export default function SearchBar({ onTrackSelect }) {
 
       {/* Resultados */}
       {showResults && results.length > 0 && (
-        <div className="absolute z-50 w-full mt-2 glass rounded-xl overflow-hidden max-h-96 overflow-y-auto">
+        <div className="absolute z-[100] w-full mt-2 glass rounded-xl overflow-hidden max-h-96 overflow-y-auto">
           {results.map((track) => (
             <button
               key={track.id}

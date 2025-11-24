@@ -13,6 +13,7 @@ export const SPOTIFY_CONFIG = {
     'user-library-read',
     'playlist-read-private',
     'playlist-read-collaborative',
+    'user-read-playback-position',
   ].join(' '),
 };
 
