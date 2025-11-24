@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { SPOTIFY_CONFIG, STORAGE_KEYS } from '../utils/constants';
+import supabase from '../lib/supabaseClient';
 import { 
   generateCodeVerifier, 
   generateCodeChallenge, 
@@ -17,6 +18,8 @@ export function useSpotifyAuth() {
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [error, setError] = useState(null);
+  // In-memory access token for current session (avoids localStorage)
+  let inMemoryAccessToken = null;
 
   /**
    * Verifica si hay un token válido al montar el componente
@@ -29,20 +32,19 @@ export function useSpotifyAuth() {
    * Verifica si el usuario está autenticado
    */
   const checkAuth = () => {
-    const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
-    const expiry = localStorage.getItem(STORAGE_KEYS.TOKEN_EXPIRY);
-
-    if (token && expiry) {
-      const now = Date.now();
-      if (now < parseInt(expiry)) {
+    // We'll rely on server-side token management. If supabase session exists,
+    // assume user will be authenticated for token retrieval via server endpoints.
+    supabase.auth.getSession().then(({ data }) => {
+      if (data && data.session) {
         setIsAuthenticated(true);
       } else {
-        // Token expirado
-        logout();
+        setIsAuthenticated(false);
       }
-    }
-
-    setIsLoading(false);
+      setIsLoading(false);
+    }).catch(() => {
+      setIsAuthenticated(false);
+      setIsLoading(false);
+    });
   };
 
   /**
@@ -107,47 +109,34 @@ export function useSpotifyAuth() {
       if (!codeVerifier) {
         throw new Error('Code verifier not found');
       }
-      
-      // Intercambiar código por token
-      const params = new URLSearchParams({
-        client_id: SPOTIFY_CONFIG.CLIENT_ID,
-        grant_type: 'authorization_code',
-        code: code,
-        redirect_uri: SPOTIFY_CONFIG.REDIRECT_URI,
-        code_verifier: codeVerifier,
-      });
-      
-      const response = await fetch(SPOTIFY_CONFIG.TOKEN_ENDPOINT, {
+
+      // Include Supabase session token if available so server can map auth user
+      const { data: sessionData } = await supabase.auth.getSession();
+      const supabaseToken = sessionData?.session?.access_token;
+
+      const resp = await fetch('/api/spotify/exchange', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': 'application/json',
+          ...(supabaseToken ? { Authorization: `Bearer ${supabaseToken}` } : {}),
         },
-        body: params.toString(),
+        body: JSON.stringify({ code, code_verifier, redirect_uri: SPOTIFY_CONFIG.REDIRECT_URI }),
       });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error_description || 'Error al obtener token');
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error?.message || err.error || 'Error al intercambiar código en el servidor');
       }
-      
-      const data = await response.json();
-      
-      // Guardar tokens
-      const expiryTime = Date.now() + (data.expires_in * 1000);
-      localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
-      localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, expiryTime.toString());
-      
-      if (data.refresh_token) {
-        localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token);
-      }
-      
-      // Limpiar datos temporales
+
+      const data = await resp.json();
+      // Store access token in memory for immediate session use (not persisted)
+      inMemoryAccessToken = data.access_token || null;
+
       clearCodeVerifier();
       localStorage.removeItem('spotify_auth_state');
-      
+
       setIsAuthenticated(true);
       setIsLoading(false);
-      
       return true;
     } catch (err) {
       console.error('Error handling callback:', err);
@@ -161,45 +150,22 @@ export function useSpotifyAuth() {
    * Refresca el token de acceso usando el refresh token
    */
   const refreshToken = async () => {
+    // Token refresh now handled server-side via /api/spotify/token
     try {
-      const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
-      
-      if (!refreshToken) {
-        throw new Error('No refresh token available');
-      }
-      
-      const params = new URLSearchParams({
-        client_id: SPOTIFY_CONFIG.CLIENT_ID,
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
+      const { data: sessionData } = await supabase.auth.getSession();
+      const supabaseToken = sessionData?.session?.access_token;
+      if (!supabaseToken) throw new Error('No Supabase session');
+
+      const resp = await fetch('/api/spotify/token', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${supabaseToken}` },
       });
-      
-      const response = await fetch(SPOTIFY_CONFIG.TOKEN_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: params.toString(),
-      });
-      
-      if (!response.ok) {
-        throw new Error('Error al refrescar token');
-      }
-      
-      const data = await response.json();
-      
-      // Actualizar token
-      const expiryTime = Date.now() + (data.expires_in * 1000);
-      localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
-      localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, expiryTime.toString());
-      
-      if (data.refresh_token) {
-        localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token);
-      }
-      
-      return true;
+      if (!resp.ok) return false;
+      const d = await resp.json();
+      inMemoryAccessToken = d.access_token || null;
+      return !!inMemoryAccessToken;
     } catch (err) {
-      console.error('Error refreshing token:', err);
+      console.error('Error refreshing token via server:', err);
       logout();
       return false;
     }
@@ -210,12 +176,11 @@ export function useSpotifyAuth() {
    */
   const logout = () => {
     // Limpiar todos los datos de autenticación
-    localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
-    localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-    localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
+    inMemoryAccessToken = null;
     clearCodeVerifier();
     localStorage.removeItem('spotify_auth_state');
-    
+    // Sign out from Supabase too (if used)
+    supabase.auth.signOut().catch(() => {});
     setIsAuthenticated(false);
     setUser(null);
     setError(null);
@@ -225,7 +190,7 @@ export function useSpotifyAuth() {
    * Obtiene el token de acceso actual
    */
   const getAccessToken = () => {
-    return localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+    return inMemoryAccessToken;
   };
 
   return {

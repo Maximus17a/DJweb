@@ -47,7 +47,11 @@ export default async function handler(req, res) {
     if (!r.ok) {
       const errText = await r.text();
       console.warn('OpenAI error:', r.status, errText);
-      res.status(502).json({ error: 'OpenAI API error', details: errText });
+      // Try to parse JSON to extract code if available
+      let parsed = null;
+      try { parsed = JSON.parse(errText); } catch (e) { /* ignore */ }
+      const code = parsed?.error?.code || null;
+      res.status(502).json({ error: 'OpenAI API error', details: errText, code });
       return;
     }
 

@@ -9,6 +9,7 @@ export default function AIChat() {
   ]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [remoteEnabled, setRemoteEnabled] = useState(true);
 
   const push = (from, text) => setMessages((m) => [...m, { from, text }]);
 
@@ -83,6 +84,12 @@ export default function AIChat() {
       return;
     }
 
+    // If remote is disabled (e.g. exhausted quota), inform user
+    if (!remoteEnabled) {
+      push('ai', 'Las llamadas remotas están desactivadas debido a problemas con la API. Puedes usar comandos locales (ej: optimizar, limpiar, siguiente).');
+      return;
+    }
+
     // Otherwise, send to AI backend for natural language response
     push('ai', 'Consultando al modelo...');
     setBusy(true);
@@ -96,7 +103,14 @@ export default function AIChat() {
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         console.warn('AI endpoint error', err);
-        push('ai', 'Error consultando al modelo. Intenta más tarde.');
+        // If OpenAI indicates insufficient_quota, disable remote and inform user
+        const code = err && (err.code || err.error?.code) ? (err.code || err.error?.code) : null;
+        if (code === 'insufficient_quota' || (err.details && String(err.details).toLowerCase().includes('insufficient_quota'))) {
+          push('ai', 'La cuota de OpenAI se ha agotado. He desactivado las llamadas remotas. Añade otra API key o configura facturación.');
+          setRemoteEnabled(false);
+        } else {
+          push('ai', 'Error consultando al modelo. Intenta más tarde.');
+        }
       } else {
         const data = await resp.json();
         const reply = data.reply || '';

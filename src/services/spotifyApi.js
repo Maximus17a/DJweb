@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { SPOTIFY_API, SPOTIFY_CONFIG, STORAGE_KEYS } from '../utils/constants';
+import supabase from '../lib/supabaseClient';
 
 /**
  * Instancia de Axios configurada para la API de Spotify
@@ -15,16 +16,48 @@ const spotifyAxios = axios.create({
  * Interceptor para añadir el token de acceso a todas las peticiones
  */
 spotifyAxios.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('spotify_access_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+  async (config) => {
+    try {
+      // Prefer server-managed token via Supabase auth session
+      const { data: sessionData } = await supabase.auth.getSession();
+      const supabaseToken = sessionData?.session?.access_token;
+      if (supabaseToken) {
+        // Request short-lived access token from serverless endpoint
+        try {
+          const resp = await fetch('/api/spotify/token', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${supabaseToken}` },
+          });
+          if (resp.ok) {
+            const d = await resp.json();
+            if (d?.access_token) {
+              config.headers = config.headers || {};
+              config.headers.Authorization = `Bearer ${d.access_token}`;
+              return config;
+            }
+          }
+        } catch (e) {
+          console.warn('[spotifyApi] Failed to get server token', e);
+        }
+      }
+
+      // Fallback: try localStorage variants to stay backward-compatible
+      const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN)
+        || localStorage.getItem('spotify_access_token')
+        || localStorage.getItem('access_token');
+
+      if (token) {
+        config.headers = config.headers || {};
+        config.headers.Authorization = `Bearer ${token}`;
+      } else {
+        console.warn('[spotifyApi] No access token found when calling', config.method?.toUpperCase(), config.url);
+      }
+    } catch (err) {
+      console.warn('[spotifyApi] request interceptor error', err);
     }
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
 /**
@@ -36,64 +69,35 @@ spotifyAxios.interceptors.response.use(
     const status = error.response?.status;
 
     if (status === 401) {
-      // Try to refresh the token using the refresh token stored in localStorage
-      const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
-      if (!refreshToken) {
-        localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
-        localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-        localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
-        window.location.href = '/';
-        return Promise.reject(error);
+      // Try server-side refresh first using Supabase session
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const supabaseToken = sessionData?.session?.access_token;
+        if (supabaseToken) {
+          const resp = await fetch('/api/spotify/token', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${supabaseToken}` },
+          });
+          if (resp.ok) {
+            const d = await resp.json();
+            const originalRequest = error.config;
+            if (d?.access_token && originalRequest) {
+              originalRequest.headers = originalRequest.headers || {};
+              originalRequest.headers.Authorization = `Bearer ${d.access_token}`;
+              return spotifyAxios.request(originalRequest);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[spotifyApi] server refresh failed', e);
       }
 
-      // Attempt refresh (synchronous chain)
-      return (async () => {
-        try {
-          const params = new URLSearchParams({
-            client_id: SPOTIFY_CONFIG.CLIENT_ID,
-            grant_type: 'refresh_token',
-            refresh_token: refreshToken,
-          });
-
-          const resp = await fetch(SPOTIFY_CONFIG.TOKEN_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: params.toString(),
-          });
-
-          if (!resp.ok) {
-            // can't refresh — force logout
-            localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
-            localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-            localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
-            window.location.href = '/';
-            return Promise.reject(error);
-          }
-
-          const data = await resp.json();
-          const expiryTime = Date.now() + (data.expires_in * 1000);
-          localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
-          localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, expiryTime.toString());
-          if (data.refresh_token) {
-            localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token);
-          }
-
-          // Update the failed request with new token and retry
-          const originalRequest = error.config;
-          if (originalRequest && originalRequest.headers) {
-            originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
-          }
-
-          return spotifyAxios.request(originalRequest);
-        } catch (refreshErr) {
-          console.warn('Failed to refresh token:', refreshErr);
-          localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
-          localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-          localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
-          window.location.href = '/';
-          return Promise.reject(refreshErr);
-        }
-      })();
+      // Fallback: clear legacy localStorage tokens and redirect to login
+      localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+      localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+      localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
+      window.location.href = '/';
+      return Promise.reject(error);
     }
 
     return Promise.reject(error);

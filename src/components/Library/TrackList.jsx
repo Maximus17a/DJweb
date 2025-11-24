@@ -65,17 +65,21 @@ export default function TrackList({ tracks, onRemove, showRemove = true }) {
               </p>
             </div>
 
-            {/* Audio features badge (si están disponibles) */}
-            {track.audioFeatures && (
-              <div className="hidden md:flex items-center gap-2 text-xs">
-                <span className="badge-ai">
-                  {Math.round(track.audioFeatures.tempo)} BPM
-                </span>
-                <span className="badge-ai">
-                  {Math.round(track.audioFeatures.energy * 100)}% Energy
-                </span>
-              </div>
-            )}
+            {/* Audio features badge (si están disponibles). Si no hay features mostrar un badge informativo */}
+            <div className="hidden md:flex items-center gap-2 text-xs">
+              {track.audioFeatures ? (
+                <>
+                  <span className="badge-ai">
+                    {Math.round(track.audioFeatures.tempo)} BPM
+                  </span>
+                  <span className="badge-ai">
+                    {Math.round(track.audioFeatures.energy * 100)}% Energy
+                  </span>
+                </>
+              ) : (
+                <span className="px-2 py-1 text-xs bg-white/5 rounded text-yellow-300">Sin features</span>
+              )}
+            </div>
 
             {/* Duration */}
             <span className="text-sm text-gray-500">
