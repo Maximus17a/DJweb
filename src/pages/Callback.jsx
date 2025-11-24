@@ -32,8 +32,14 @@ export default function Callback() {
         return;
       }
 
-      // Procesar el callback
-      const success = await handleCallback(code, state);
+      // Procesar el callback. Support both legacy PKCE (code/state)
+      // and Supabase OAuth (no code/state; session available via Supabase).
+      let success = false;
+      if (code && state) {
+        success = await handleCallback(code, state);
+      } else {
+        success = await handleCallback();
+      }
 
       if (success) {
         navigate('/');

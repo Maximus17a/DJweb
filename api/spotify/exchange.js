@@ -10,6 +10,19 @@ const {
 
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
 
+// Basic environment validation to help debugging on deploys
+const missingEnvs = [];
+if (!SUPABASE_URL) missingEnvs.push('SUPABASE_URL');
+if (!SUPABASE_SERVICE_ROLE) missingEnvs.push('SUPABASE_SERVICE_ROLE');
+if (!SPOTIFY_CLIENT_ID) missingEnvs.push('SPOTIFY_CLIENT_ID');
+if (!SPOTIFY_CLIENT_SECRET) missingEnvs.push('SPOTIFY_CLIENT_SECRET');
+if (!SPOTIFY_REDIRECT_URI) missingEnvs.push('SPOTIFY_REDIRECT_URI');
+
+if (missingEnvs.length) {
+  // Log so Vercel/hosted logs show missing config
+  console.error('Missing required environment variables:', missingEnvs.join(', '));
+}
+
 async function spotifyToken(params) {
   const resp = await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
@@ -85,6 +98,9 @@ export default async function handler(req, res) {
     return res.status(200).json({ access_token, expires_in, spotify_id, profile });
   } catch (err) {
     console.error('exchange handler error', err);
-    return res.status(500).json({ error: 'server_error' });
+    console.error('exchange handler error', err);
+    // In development return the error message to help debugging; hide in production
+    const devMessage = process.env.NODE_ENV !== 'production' ? (err?.message || err) : 'server_error';
+    return res.status(500).json({ error: devMessage });
   }
 }

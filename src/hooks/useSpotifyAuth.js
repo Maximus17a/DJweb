@@ -1,16 +1,9 @@
 import { useState, useEffect } from 'react';
-import { SPOTIFY_CONFIG, STORAGE_KEYS } from '../utils/constants';
+import { SPOTIFY_CONFIG } from '../utils/constants';
 import supabase from '../lib/supabaseClient';
-import { 
-  generateCodeVerifier, 
-  generateCodeChallenge, 
-  saveCodeVerifier,
-  getCodeVerifier,
-  clearCodeVerifier 
-} from '../utils/pkce';
 
 /**
- * Hook personalizado para manejar la autenticación de Spotify con PKCE
+ * Hook personalizado para manejar la autenticación de Spotify usando Supabase OAuth
  * @returns {Object} Estado y funciones de autenticación
  */
 export function useSpotifyAuth() {
@@ -20,12 +13,36 @@ export function useSpotifyAuth() {
   const [error, setError] = useState(null);
   // In-memory access token for current session (avoids localStorage)
   let inMemoryAccessToken = null;
+  let authListener = null;
 
   /**
    * Verifica si hay un token válido al montar el componente
    */
   useEffect(() => {
     checkAuth();
+    // Listen for auth state changes (login/logout) and update state accordingly
+    authListener = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' || session?.access_token) {
+        inMemoryAccessToken = session?.access_token || null;
+        setIsAuthenticated(true);
+      } else if (event === 'SIGNED_OUT') {
+        inMemoryAccessToken = null;
+        setIsAuthenticated(false);
+      }
+    });
+
+    return () => {
+      // Supabase v2 returns { data: { subscription } }
+      try {
+        if (authListener?.data?.subscription?.unsubscribe) {
+          authListener.data.subscription.unsubscribe();
+        } else if (typeof authListener?.unsubscribe === 'function') {
+          authListener.unsubscribe();
+        }
+      } catch (e) {
+        // ignore unsubscribe errors
+      }
+    };
   }, []);
 
   /**
@@ -53,33 +70,16 @@ export function useSpotifyAuth() {
   const login = async () => {
     try {
       setError(null);
-      
-      // Generar code verifier y challenge
-      const codeVerifier = generateCodeVerifier();
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      
-      // Guardar code verifier para usarlo después
-      saveCodeVerifier(codeVerifier);
-      
-      // Generar state para prevenir CSRF
-      const state = generateCodeVerifier(16);
-      localStorage.setItem('spotify_auth_state', state);
-      
-      // Construir URL de autorización
-      const params = new URLSearchParams({
-        client_id: SPOTIFY_CONFIG.CLIENT_ID,
-        response_type: 'code',
-        redirect_uri: SPOTIFY_CONFIG.REDIRECT_URI,
-        code_challenge_method: 'S256',
-        code_challenge: codeChallenge,
-        state: state,
-        scope: SPOTIFY_CONFIG.SCOPES,
+      // Use Supabase OAuth provider for Spotify. Supabase handles redirect.
+      await supabase.auth.signInWithOAuth({
+        provider: 'spotify',
+        options: {
+          redirectTo: SPOTIFY_CONFIG.REDIRECT_URI,
+          scopes: SPOTIFY_CONFIG.SCOPES,
+        },
       });
-      
-      // Redirigir a Spotify para autorización
-      window.location.href = `${SPOTIFY_CONFIG.AUTH_ENDPOINT}?${params.toString()}`;
     } catch (err) {
-      console.error('Error during login:', err);
+      console.error('Error during login (supabase oauth):', err);
       setError('Error al iniciar sesión. Por favor, intenta nuevamente.');
     }
   };
@@ -89,57 +89,24 @@ export function useSpotifyAuth() {
    * @param {string} code - Código de autorización
    * @param {string} state - State para verificación CSRF
    */
-  const handleCallback = async (code, state) => {
+  const handleCallback = async () => {
+    // With Supabase OAuth, after redirect the session is available via getSession
     try {
       setIsLoading(true);
       setError(null);
-      
-      // Verificar state para prevenir CSRF
-      const savedState = localStorage.getItem('spotify_auth_state');
-      
-      if (state !== savedState) {
-        throw new Error('State mismatch - possible CSRF attack');
+      const { data } = await supabase.auth.getSession();
+      const session = data?.session;
+      if (session && session.access_token) {
+        inMemoryAccessToken = session.access_token;
+        setIsAuthenticated(true);
+        setIsLoading(false);
+        return true;
       }
-
-      // Limpiar el estado después de la verificación exitosa
-      localStorage.removeItem('spotify_auth_state');
-      
-      // Obtener code verifier
-      const codeVerifier = getCodeVerifier();
-      if (!codeVerifier) {
-        throw new Error('Code verifier not found');
-      }
-
-      // Include Supabase session token if available so server can map auth user
-      const { data: sessionData } = await supabase.auth.getSession();
-      const supabaseToken = sessionData?.session?.access_token;
-
-      const resp = await fetch('/api/spotify/exchange', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(supabaseToken ? { Authorization: `Bearer ${supabaseToken}` } : {}),
-        },
-        body: JSON.stringify({ code, code_verifier: codeVerifier, redirect_uri: SPOTIFY_CONFIG.REDIRECT_URI }),
-      });
-
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error?.message || err.error || 'Error al intercambiar código en el servidor');
-      }
-
-      const data = await resp.json();
-      // Store access token in memory for immediate session use (not persisted)
-      inMemoryAccessToken = data.access_token || null;
-
-      clearCodeVerifier();
-      localStorage.removeItem('spotify_auth_state');
-
-      setIsAuthenticated(true);
+      setIsAuthenticated(false);
       setIsLoading(false);
-      return true;
+      return false;
     } catch (err) {
-      console.error('Error handling callback:', err);
+      console.error('Error handling callback (supabase):', err);
       setError(err.message || 'Error al procesar autenticación');
       setIsLoading(false);
       return false;
@@ -177,7 +144,6 @@ export function useSpotifyAuth() {
   const logout = () => {
     // Limpiar todos los datos de autenticación
     inMemoryAccessToken = null;
-    clearCodeVerifier();
     localStorage.removeItem('spotify_auth_state');
     // Sign out from Supabase too (if used)
     supabase.auth.signOut().catch(() => {});
