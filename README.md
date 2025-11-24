@@ -30,9 +30,9 @@ Una aplicación web moderna de DJ impulsada por IA que analiza metadatos musical
 - Totalmente responsive
 
 ### 🔐 Autenticación Segura
-- **OAuth 2.0 con PKCE** (sin exponer Client Secret)
-- Manejo automático de refresh tokens
-- Sin backend pesado necesario
+- **OAuth 2.0 via Supabase (recomendado)**
+- Supabase gestiona el flujo OAuth y las sesiones de usuario
+- Puedes usar provider tokens desde Supabase o gestionar tokens server-side
 
 ## 🚀 Tecnologías
 
@@ -238,7 +238,7 @@ score = (bpmSimilarity × 0.4) + (keyCompatibility × 0.3) + (energyFlow × 0.3)
 │   │   ├── AuthContext.jsx  # Estado de autenticación
 │   │   └── PlayerContext.jsx # Estado del reproductor
 │   ├── hooks/
-│   │   └── useSpotifyAuth.js # Hook de OAuth PKCE
+│   │   └── useSpotifyAuth.js # Hook de OAuth (Supabase)
 │   ├── services/
 │   │   └── spotifyApi.js    # Cliente de Spotify API
 │   ├── styles/
@@ -246,7 +246,7 @@ score = (bpmSimilarity × 0.4) + (keyCompatibility × 0.3) + (energyFlow × 0.3)
 │   ├── utils/
 │   │   ├── bpmMatcher.js    # Algoritmo de IA
 │   │   ├── constants.js     # Constantes
-│   │   └── pkce.js          # Utilidades PKCE
+│   │   └── pkce.js          # (deprecated) PKCE helpers — kept for compatibility
 │   ├── pages/
 │   │   ├── Dashboard.jsx    # Página principal
 │   │   └── Callback.jsx     # OAuth callback

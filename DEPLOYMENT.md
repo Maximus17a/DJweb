@@ -30,7 +30,7 @@ Esta guía te ayudará a desplegar tu aplicación en **Vercel** (frontend) y con
 
 1. En tu aplicación, ve a **Settings**
 2. Copia el **Client ID** (lo necesitarás para las variables de entorno)
-3. **NO necesitas el Client Secret** (usamos PKCE para seguridad)
+3. **Client Secret**: si vas a usar la integración de OAuth en Supabase, pega el `Client ID` y `Client Secret` en Supabase Dashboard → Authentication → Providers → Spotify. Si mantienes un flujo manual/servidor, guarda el `Client Secret` como variable de entorno segura en Vercel.
 
 ---
 

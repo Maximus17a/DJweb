@@ -65,7 +65,7 @@ export function useSpotifyAuth() {
   };
 
   /**
-   * Inicia el flujo de autenticación con PKCE
+   * Inicia el flujo de autenticación usando Supabase OAuth
    */
   const login = async () => {
     try {
@@ -99,6 +99,20 @@ export function useSpotifyAuth() {
       if (session && session.access_token) {
         inMemoryAccessToken = session.access_token;
         setIsAuthenticated(true);
+        // Sync server-side user record by calling exchange endpoint without code
+        try {
+          await fetch('/api/spotify/exchange', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({}),
+          });
+        } catch (e) {
+          console.warn('Failed to sync spotify identity with server:', e);
+        }
+
         setIsLoading(false);
         return true;
       }

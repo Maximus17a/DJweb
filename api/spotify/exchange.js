@@ -41,28 +41,58 @@ export default async function handler(req, res) {
   try {
     const authHeader = req.headers.authorization || '';
     const supabaseToken = authHeader.split(' ')[1]; // optional, used to map to auth user
-
     const { code, code_verifier, redirect_uri } = req.body || {};
-    if (!code || !code_verifier) return res.status(400).json({ error: 'missing_code_or_verifier' });
 
-    // Exchange code for tokens
-    const tokenData = await spotifyToken({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirect_uri || SPOTIFY_REDIRECT_URI,
-      code_verifier,
-    });
+    let access_token = null;
+    let refresh_token = null;
+    let expires_in = null;
 
-    if (tokenData.error) {
-      return res.status(400).json({ error: tokenData });
+    if (!code) {
+      // No manual code exchange: try to extract provider tokens from Supabase identity
+      if (!supabaseToken) return res.status(400).json({ error: 'missing_code_or_supabase_token' });
+
+      const { data: userRes, error: getUserErr } = await supabaseAdmin.auth.getUser(supabaseToken);
+      if (getUserErr || !userRes?.user) return res.status(401).json({ error: 'invalid_supabase_token' });
+
+      // Find Spotify identity among user's identities
+      const identities = userRes.user.identities || [];
+      const spotifyIdentity = identities.find(i => i.provider === 'spotify');
+      if (!spotifyIdentity) return res.status(400).json({ error: 'no_spotify_identity' });
+
+      const idData = spotifyIdentity.identity_data || {};
+      access_token = idData.access_token || idData.accessToken || idData.token || null;
+      refresh_token = idData.refresh_token || null;
+      // expiry may not be provided; keep null if unknown
+      if (!access_token) return res.status(400).json({ error: 'no_provider_tokens' });
+    } else {
+      // Legacy: Exchange code for tokens (PKCE/manual) — keep for backward compatibility
+      if (!code_verifier) return res.status(400).json({ error: 'missing_code_or_verifier' });
+
+      const tokenData = await spotifyToken({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirect_uri || SPOTIFY_REDIRECT_URI,
+        code_verifier,
+      });
+
+      if (tokenData.error) {
+        return res.status(400).json({ error: tokenData });
+      }
+
+      access_token = tokenData.access_token;
+      refresh_token = tokenData.refresh_token;
+      expires_in = tokenData.expires_in;
     }
 
-    const { access_token, refresh_token, expires_in } = tokenData;
-
-    // Get Spotify profile
+    // Get Spotify profile using the access token (from provider identity or exchange)
     const profileRes = await fetch('https://api.spotify.com/v1/me', {
       headers: { Authorization: `Bearer ${access_token}` },
     });
+    if (!profileRes.ok) {
+      const pd = await profileRes.text().catch(() => '');
+      console.error('Failed to fetch spotify profile', profileRes.status, pd);
+      return res.status(400).json({ error: 'failed_fetch_spotify_profile' });
+    }
     const profile = await profileRes.json();
     const spotify_id = profile.id;
 
@@ -77,7 +107,7 @@ export default async function handler(req, res) {
       }
     }
 
-    const expiry = Date.now() + (expires_in * 1000);
+    const expiry = expires_in ? Date.now() + (expires_in * 1000) : null;
 
     // Upsert into users table using service role
     const upsertObj = {

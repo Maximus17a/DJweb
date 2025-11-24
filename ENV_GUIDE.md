@@ -164,11 +164,12 @@ https://*.vercel.app/callback
    - **APIs used**: Marca "Web API" y "Web Playback SDK"
 5. Acepta los términos y haz clic en **"Save"**
 
-#### Paso 2: Obtener Client ID
+#### Paso 2: Obtener Client ID y Client Secret
 
 1. En tu aplicación, haz clic en **"Settings"**
 2. Copia el **Client ID** (32 caracteres)
-3. **NO necesitas el Client Secret** (usamos PKCE)
+3. Copia el **Client Secret** y guárdalo en tu proyecto Supabase (o en Vercel env vars si usas el servidor manual)
+   - Si usas la integración de proveedores de Supabase, pega el Client ID y Client Secret en Supabase Dashboard → Authentication → Providers → Spotify.
 
 #### Paso 3: Configurar Redirect URIs
 
@@ -322,7 +323,7 @@ Spotify Dashboard: http://localhost:5173/callback
 ### ✅ Buenas Prácticas
 
 1. **Nunca** commits el archivo `.env.local` al repositorio
-2. **Nunca** expongas el Client Secret de Spotify (usamos PKCE, no lo necesitamos)
+2. **Nunca** expongas el Client Secret de Spotify en el frontend. Si usas Supabase OAuth, añade el Client Secret en Supabase Dashboard (no en el cliente).
 3. Usa diferentes Client IDs para desarrollo y producción (opcional pero recomendado)
 4. Rota las credenciales periódicamente
 5. Limita los Redirect URIs solo a los dominios que uses
