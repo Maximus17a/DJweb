@@ -120,7 +120,7 @@ export function useSpotifyAuth() {
           'Content-Type': 'application/json',
           ...(supabaseToken ? { Authorization: `Bearer ${supabaseToken}` } : {}),
         },
-        body: JSON.stringify({ code, code_verifier, redirect_uri: SPOTIFY_CONFIG.REDIRECT_URI }),
+        body: JSON.stringify({ code, code_verifier: codeVerifier, redirect_uri: SPOTIFY_CONFIG.REDIRECT_URI }),
       });
 
       if (!resp.ok) {
