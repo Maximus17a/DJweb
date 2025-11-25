@@ -21,9 +21,17 @@ export default function Callback() {
 
       if (error) {
         console.warn('OAuth error:', error);
-        navigate('/?error=' + error);
+        navigate('/login?error=' + encodeURIComponent(error), { replace: true });
         return;
       }
+
+      if (!code && !state) {
+        // Check if we have a session from Supabase (implicit flow or cached)
+        // If not, redirect to login
+        // But wait, handleCallback handles the session check too.
+        // If no code/state, we might just be visiting /callback manually.
+      }
+
 
       if (!code || !state) {
         // Not necessarily an exceptional error — redirect quietly
@@ -44,7 +52,7 @@ export default function Callback() {
       if (success) {
         navigate('/');
       } else {
-        navigate('/?error=auth_failed');
+        navigate('/login?error=auth_failed');
       }
     };
 

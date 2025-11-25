@@ -1,8 +1,25 @@
-import { LogIn, Music } from 'lucide-react';
+import { LogIn, Music, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useSearchParams } from 'react-router-dom';
 
 export default function LoginButton() {
   const { login, isLoading } = useAuth();
+  const [searchParams] = useSearchParams();
+  const error = searchParams.get('error');
+  const errorDescription = searchParams.get('error_description');
+
+  let errorMessage = null;
+  if (error) {
+    if (error === 'over_email_send_rate_limit' || error.includes('rate_limit')) {
+      errorMessage = 'Demasiados intentos. Por favor espera un minuto antes de volver a intentar.';
+    } else if (error === 'auth_failed') {
+      errorMessage = 'No se pudo completar la autenticación. Intenta nuevamente.';
+    } else if (error === 'server_error') {
+      errorMessage = 'Error de configuración en el servidor (Supabase/Spotify). Verifica el Client Secret y las Redirect URIs.';
+    } else {
+      errorMessage = decodeURIComponent(errorDescription || error).replace(/\+/g, ' ');
+    }
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-cyber-darker relative overflow-hidden">
@@ -32,6 +49,13 @@ export default function LoginButton() {
         <p className="text-gray-500 mb-12 max-w-md mx-auto">
           Deja que la inteligencia artificial mezcle tu música perfectamente
         </p>
+
+        {errorMessage && (
+          <div className="mb-8 p-4 bg-red-500/10 border border-red-500/50 rounded-lg flex items-center gap-3 max-w-md mx-auto text-red-200">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <p className="text-sm text-left">{errorMessage}</p>
+          </div>
+        )}
 
         {/* Botón de login */}
         <button

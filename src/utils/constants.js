@@ -1,7 +1,8 @@
 // Spotify OAuth Configuration
 export const SPOTIFY_CONFIG = {
   CLIENT_ID: import.meta.env.VITE_SPOTIFY_CLIENT_ID,
-  REDIRECT_URI: import.meta.env.VITE_REDIRECT_URI || 'http://localhost:5173/callback',
+  // Prioritize current window origin to ensure redirects work on Vercel/Preview deployments automatically
+  REDIRECT_URI: (typeof window !== 'undefined') ? `${window.location.origin}/callback` : (import.meta.env.VITE_REDIRECT_URI || 'http://localhost:3000/callback'),
   AUTH_ENDPOINT: 'https://accounts.spotify.com/authorize',
   TOKEN_ENDPOINT: 'https://accounts.spotify.com/api/token',
   SCOPES: [
