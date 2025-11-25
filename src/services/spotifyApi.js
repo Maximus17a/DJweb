@@ -213,7 +213,7 @@ export async function getMultipleAudioFeatures(trackIds) {
       }
     }
     return allFeatures;
-  } catch (error) {
+  } catch {
     return new Array(trackIds.length).fill(null);
   }
 }
