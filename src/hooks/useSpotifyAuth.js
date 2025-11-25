@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { SPOTIFY_CONFIG } from '../utils/constants';
 import supabase from '../lib/supabaseClient';
 
@@ -12,8 +12,8 @@ export function useSpotifyAuth() {
   const [user, setUser] = useState(null);
   const [error, setError] = useState(null);
   // In-memory access token for current session (avoids localStorage)
-  let inMemoryAccessToken = null;
-  let authListener = null;
+  const inMemoryAccessTokenRef = useRef(null);
+  const authListenerRef = useRef(null);
 
   /**
    * Verifica si hay un token válido al montar el componente
@@ -21,12 +21,12 @@ export function useSpotifyAuth() {
   useEffect(() => {
     checkAuth();
     // Listen for auth state changes (login/logout) and update state accordingly
-    authListener = supabase.auth.onAuthStateChange((event, session) => {
+    authListenerRef.current = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' || session?.access_token) {
-        inMemoryAccessToken = session?.access_token || null;
+        inMemoryAccessTokenRef.current = session?.access_token || null;
         setIsAuthenticated(true);
       } else if (event === 'SIGNED_OUT') {
-        inMemoryAccessToken = null;
+        inMemoryAccessTokenRef.current = null;
         setIsAuthenticated(false);
       }
     });
@@ -34,12 +34,12 @@ export function useSpotifyAuth() {
     return () => {
       // Supabase v2 returns { data: { subscription } }
       try {
-        if (authListener?.data?.subscription?.unsubscribe) {
-          authListener.data.subscription.unsubscribe();
-        } else if (typeof authListener?.unsubscribe === 'function') {
-          authListener.unsubscribe();
+        if (authListenerRef.current?.data?.subscription?.unsubscribe) {
+          authListenerRef.current.data.subscription.unsubscribe();
+        } else if (typeof authListenerRef.current?.unsubscribe === 'function') {
+          authListenerRef.current.unsubscribe();
         }
-      } catch (e) {
+      } catch {
         // ignore unsubscribe errors
       }
     };
@@ -49,8 +49,6 @@ export function useSpotifyAuth() {
    * Verifica si el usuario está autenticado
    */
   const checkAuth = () => {
-    // We'll rely on server-side token management. If supabase session exists,
-    // assume user will be authenticated for token retrieval via server endpoints.
     supabase.auth.getSession().then(({ data }) => {
       if (data && data.session) {
         setIsAuthenticated(true);
@@ -97,7 +95,7 @@ export function useSpotifyAuth() {
       const { data } = await supabase.auth.getSession();
       const session = data?.session;
       if (session && session.access_token) {
-        inMemoryAccessToken = session.access_token;
+        inMemoryAccessTokenRef.current = session.access_token;
         setIsAuthenticated(true);
         // Sync server-side user record by calling exchange endpoint without code
         try {
@@ -143,8 +141,8 @@ export function useSpotifyAuth() {
       });
       if (!resp.ok) return false;
       const d = await resp.json();
-      inMemoryAccessToken = d.access_token || null;
-      return !!inMemoryAccessToken;
+      inMemoryAccessTokenRef.current = d.access_token || null;
+      return !!inMemoryAccessTokenRef.current;
     } catch (err) {
       console.error('Error refreshing token via server:', err);
       logout();
@@ -157,7 +155,7 @@ export function useSpotifyAuth() {
    */
   const logout = () => {
     // Limpiar todos los datos de autenticación
-    inMemoryAccessToken = null;
+    inMemoryAccessTokenRef.current = null;
     localStorage.removeItem('spotify_auth_state');
     // Sign out from Supabase too (if used)
     supabase.auth.signOut().catch(() => {});
@@ -170,7 +168,7 @@ export function useSpotifyAuth() {
    * Obtiene el token de acceso actual
    */
   const getAccessToken = () => {
-    return inMemoryAccessToken;
+    return inMemoryAccessTokenRef.current;
   };
 
   return {
