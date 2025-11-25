@@ -32,7 +32,6 @@ export default function Callback() {
         // If no code/state, we might just be visiting /callback manually.
       }
 
-
       if (!code || !state) {
         // Not necessarily an exceptional error — redirect quietly
         console.warn('Missing code or state in callback');
@@ -57,7 +56,7 @@ export default function Callback() {
     };
 
     processCallback();
-  }, []);
+  }, [handleCallback, navigate]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-cyber-darker">
