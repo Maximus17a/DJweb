@@ -1,75 +1,50 @@
-import { Buffer } from 'node:buffer'; // <--- CRÍTICO
-import { createClient } from '@supabase/supabase-js';
+import { Buffer } from 'node:buffer';
 
 const {
-  SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE,
   SPOTIFY_CLIENT_ID,
   SPOTIFY_CLIENT_SECRET,
 } = process.env;
 
-const supabaseAdmin = createClient(
-  SUPABASE_URL || 'https://placeholder.supabase.co',
-  SUPABASE_SERVICE_ROLE || 'placeholder'
-);
-
-async function spotifyToken(params) {
-  return await fetch('https://accounts.spotify.com/api/token', { // URL Corregida
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: 'Basic ' + Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64'),
-    },
-    body: new URLSearchParams(params).toString(),
-  }).then(r => r.json());
-}
-
 export default async function handler(req, res) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  // Permitir POST para enviar el refresh_token en el body
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const authHeader = req.headers.authorization || '';
-    const supabaseToken = authHeader.split(' ')[1];
-    if (!supabaseToken) return res.status(401).json({ error: 'Missing token' });
+    const { refresh_token } = req.body;
 
-    const { data: { user }, error: userErr } = await supabaseAdmin.auth.getUser(supabaseToken);
-    if (userErr || !user) return res.status(401).json({ error: 'Invalid token' });
-
-    const { data: userRow } = await supabaseAdmin
-      .from('users')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-
-    if (!userRow || !userRow.refresh_token) {
-      return res.status(404).json({ error: 'No refresh token found' });
+    if (!refresh_token) {
+      return res.status(400).json({ error: 'Missing refresh token' });
     }
 
-    // Si el token aun sirve, lo devolvemos
-    if (userRow.token_expiry && userRow.token_expiry > Date.now() + 300000) {
-      return res.json({ access_token: userRow.access_token });
-    }
-
-    // Refrescar token
-    const data = await spotifyToken({
-      grant_type: 'refresh_token',
-      refresh_token: userRow.refresh_token,
+    // Pedir nuevo token a Spotify
+    const response = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: 'Basic ' + Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64'),
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refresh_token,
+      }).toString(),
     });
 
+    const data = await response.json();
+
     if (data.error) {
-      return res.status(400).json({ error: 'Failed to refresh token' });
+      return res.status(400).json({ error: data.error });
     }
 
-    const newExpiry = Date.now() + (data.expires_in * 1000);
-    await supabaseAdmin.from('users').update({
+    // Devolvemos el nuevo token al frontend
+    return res.json({ 
       access_token: data.access_token,
-      token_expiry: newExpiry,
-      refresh_token: data.refresh_token || userRow.refresh_token
-    }).eq('id', user.id);
-
-    return res.json({ access_token: data.access_token });
+      expires_in: data.expires_in,
+      // A veces Spotify rota el refresh token, si viene uno nuevo, lo devolvemos
+      refresh_token: data.refresh_token || undefined 
+    });
 
   } catch (err) {
+    console.error('Token refresh crash:', err);
     return res.status(500).json({ error: err.message });
   }
 }

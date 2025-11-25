@@ -1,134 +1,124 @@
+// src/hooks/useSpotifyAuth.js
 import { useState, useEffect, useRef } from 'react';
-import { SPOTIFY_CONFIG } from '../utils/constants';
-import supabase from '../lib/supabaseClient';
+import { SPOTIFY_CONFIG, STORAGE_KEYS } from '../utils/constants';
+import { generateCodeVerifier, generateCodeChallenge, saveCodeVerifier, getCodeVerifier, clearCodeVerifier } from '../utils/pkce';
 
 export function useSpotifyAuth() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [error, setError] = useState(null);
-  const inMemoryAccessTokenRef = useRef(null);
-  const authListenerRef = useRef(null);
-
-  const checkAuth = () => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data && data.session) {
-        setIsAuthenticated(true);
-        if (data.session.provider_token) {
-            inMemoryAccessTokenRef.current = data.session.provider_token;
-        }
-      } else {
-        setIsAuthenticated(false);
-      }
-      setIsLoading(false);
-    }).catch(() => {
-      setIsAuthenticated(false);
-      setIsLoading(false);
-    });
-  };
+  
+  // Mantener token en memoria para acceso rápido
+  const tokenRef = useRef(localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN));
 
   useEffect(() => {
-    checkAuth();
-    authListenerRef.current = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' || session?.access_token) {
-        inMemoryAccessTokenRef.current = session?.provider_token || null;
-        setIsAuthenticated(true);
-      } else if (event === 'SIGNED_OUT') {
-        inMemoryAccessTokenRef.current = null;
-        setIsAuthenticated(false);
-      }
-    });
-
-    return () => {
-      try {
-        if (authListenerRef.current?.data?.subscription?.unsubscribe) {
-          authListenerRef.current.data.subscription.unsubscribe();
-        }
-      } catch { /* ignore */ }
-    };
+    // Al cargar, verificar si tenemos tokens en localStorage
+    const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+    const expiry = localStorage.getItem(STORAGE_KEYS.TOKEN_EXPIRY);
+    
+    if (token && expiry && Date.now() < parseInt(expiry)) {
+      tokenRef.current = token;
+      setIsAuthenticated(true);
+      // Cargar usuario desde localStorage si existe
+      const savedUser = localStorage.getItem('spotify_user_profile');
+      if (savedUser) setUser(JSON.parse(savedUser));
+    } else {
+      logout(); // Limpiar si expiró
+    }
+    setIsLoading(false);
   }, []);
 
   const login = async () => {
     try {
-      setError(null);
-      const options = {
-        redirectTo: SPOTIFY_CONFIG.REDIRECT_URI,
-        scopes: SPOTIFY_CONFIG.SCOPES,
-        queryParams: {
-          access_type: 'offline', // IMPORTANTE: Pide Refresh Token
-          prompt: 'consent',      // IMPORTANTE: Fuerza pantalla de aceptación
-        }
-      };
-      await supabase.auth.signInWithOAuth({ provider: 'spotify', options });
+      setIsLoading(true);
+      // 1. Generar PKCE
+      const verifier = generateCodeVerifier();
+      saveCodeVerifier(verifier);
+      const challenge = await generateCodeChallenge(verifier);
+
+      // 2. Construir URL de Spotify
+      const params = new URLSearchParams({
+        response_type: 'code',
+        client_id: SPOTIFY_CONFIG.CLIENT_ID,
+        scope: SPOTIFY_CONFIG.SCOPES,
+        redirect_uri: SPOTIFY_CONFIG.REDIRECT_URI,
+        code_challenge_method: 'S256',
+        code_challenge: challenge,
+      });
+
+      // 3. Redirigir al usuario
+      window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
     } catch (err) {
-      console.error('Error during login:', err);
-      setError('Error al iniciar sesión.');
+      console.error('Login error:', err);
+      setError('Error iniciando login');
+      setIsLoading(false);
     }
   };
 
   const handleCallback = async () => {
     try {
       setIsLoading(true);
-      setError(null);
-      
-      const { data } = await supabase.auth.getSession();
-      const session = data?.session;
-      
-      if (session) {
-        const providerToken = session.provider_token;
-        const providerRefreshToken = session.provider_refresh_token;
-        
-        inMemoryAccessTokenRef.current = providerToken;
-        
-        // ENVIAR TOKENS AL BACKEND MANUALMENTE
-        try {
-          const resp = await fetch('/api/spotify/exchange', {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              spotify_access_token: providerToken,
-              spotify_refresh_token: providerRefreshToken,
-            }),
-          });
-          
-          if (!resp.ok) {
-            console.warn('Sync warning:', await resp.text());
-          } else {
-            console.log('Tokens guardados correctamente en DB');
-          }
-        } catch (e) {
-          console.warn('Error contactando endpoint de intercambio:', e);
-        }
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      const error = params.get('error');
 
-        setIsAuthenticated(true);
-        setIsLoading(false);
-        return true;
+      if (error || !code) throw new Error(error || 'No code returned');
+
+      const verifier = getCodeVerifier();
+      if (!verifier) throw new Error('No PKCE verifier found');
+
+      // 4. Intercambiar código por tokens en NUESTRO backend
+      const response = await fetch('/api/spotify/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          code_verifier: verifier,
+          redirect_uri: SPOTIFY_CONFIG.REDIRECT_URI
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Token exchange failed');
       }
+
+      const data = await response.json();
+
+      // 5. Guardar sesión en LocalStorage (¡CRÍTICO para persistencia!)
+      const expiryTime = Date.now() + (data.expires_in * 1000);
+      localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
+      localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token); // El backend debe devolver esto
+      localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, expiryTime);
+      localStorage.setItem('spotify_user_profile', JSON.stringify(data.profile));
+
+      tokenRef.current = data.access_token;
+      setUser(data.profile);
+      setIsAuthenticated(true);
+      clearCodeVerifier();
       
-      setIsAuthenticated(false);
-      setIsLoading(false);
-      return false;
+      return true;
     } catch (err) {
-      console.error('Error handling callback:', err);
-      setError(err.message || 'Error al procesar autenticación');
-      setIsLoading(false);
+      console.error('Callback error:', err);
+      setError(err.message);
       return false;
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const logout = () => {
-    inMemoryAccessTokenRef.current = null;
-    supabase.auth.signOut().catch(() => {});
+    localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+    localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+    localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
+    localStorage.removeItem('spotify_user_profile');
+    tokenRef.current = null;
     setIsAuthenticated(false);
     setUser(null);
-    setError(null);
   };
 
-  const getAccessToken = () => inMemoryAccessTokenRef.current;
-  const refreshToken = async () => false;
+  const getAccessToken = () => tokenRef.current;
 
   return {
     isAuthenticated,
@@ -138,7 +128,6 @@ export function useSpotifyAuth() {
     login,
     logout,
     handleCallback,
-    refreshToken,
-    getAccessToken,
+    getAccessToken
   };
 }
