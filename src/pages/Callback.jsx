@@ -14,10 +14,8 @@ export default function Callback() {
       if (hasProcessed.current) return;
       hasProcessed.current = true;
 
-      // Obtener código y state de la URL
+      // Obtener parámetros de error si existen
       const params = new URLSearchParams(window.location.search);
-      const code = params.get('code');
-      const state = params.get('state');
       const error = params.get('error');
 
       if (error) {
@@ -25,25 +23,18 @@ export default function Callback() {
         return;
       }
 
-      if (!code || !state) {
-        setErrorMsg('Faltan parámetros de autenticación.');
-        return;
-      }
-
       try {
-        let success = false;
-        if (code && state) {
-          success = await handleCallback(code, state);
-        } else {
-          success = await handleCallback();
-        }
+        // Eliminamos la verificación manual de code/state.
+        // Dejamos que handleCallback verifique si Supabase ha establecido la sesión.
+        const success = await handleCallback();
 
         if (success) {
           navigate('/');
         } else {
-          setErrorMsg('Error de autenticación.');
+          setErrorMsg('No se pudo verificar la sesión. Intenta conectar nuevamente.');
         }
-      } catch {
+      } catch (err) {
+        console.error(err);
         setErrorMsg('Error en el proceso de autenticación.');
       }
     };
@@ -54,8 +45,14 @@ export default function Callback() {
   if (errorMsg) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-cyber-darker">
-        <div className="text-center">
+        <div className="text-center space-y-4">
           <p className="text-xl text-red-500">{errorMsg}</p>
+          <button 
+            onClick={() => navigate('/login')}
+            className="px-4 py-2 bg-white/10 rounded hover:bg-white/20 transition-colors"
+          >
+            Volver al Login
+          </button>
         </div>
       </div>
     );
@@ -65,7 +62,7 @@ export default function Callback() {
     <div className="min-h-screen flex items-center justify-center bg-cyber-darker">
       <div className="text-center">
         <Loader2 className="w-12 h-12 text-neon-purple animate-spin mx-auto mb-4" />
-        <p className="text-xl text-gray-400">Conectando con Spotify...</p>
+        <p className="text-xl text-gray-400">Finalizando conexión...</p>
       </div>
     </div>
   );
