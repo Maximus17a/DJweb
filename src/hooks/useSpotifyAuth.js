@@ -13,6 +13,21 @@ export function useSpotifyAuth() {
   const inMemoryAccessTokenRef = useRef(null);
   const authListenerRef = useRef(null);
 
+  // Declarar checkAuth antes del useEffect para evitar error de dependencias
+  const checkAuth = () => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data && data.session) {
+        setIsAuthenticated(true);
+      } else {
+        setIsAuthenticated(false);
+      }
+      setIsLoading(false);
+    }).catch(() => {
+      setIsAuthenticated(false);
+      setIsLoading(false);
+    });
+  };
+
   useEffect(() => {
     checkAuth();
     authListenerRef.current = supabase.auth.onAuthStateChange((event, session) => {
@@ -37,20 +52,6 @@ export function useSpotifyAuth() {
       }
     };
   }, []);
-
-  const checkAuth = () => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data && data.session) {
-        setIsAuthenticated(true);
-      } else {
-        setIsAuthenticated(false);
-      }
-      setIsLoading(false);
-    }).catch(() => {
-      setIsAuthenticated(false);
-      setIsLoading(false);
-    });
-  };
 
   const login = async () => {
     try {
