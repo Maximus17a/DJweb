@@ -19,7 +19,6 @@ if (!SPOTIFY_CLIENT_SECRET) missingEnvs.push('SPOTIFY_CLIENT_SECRET');
 if (!SPOTIFY_REDIRECT_URI) missingEnvs.push('SPOTIFY_REDIRECT_URI');
 
 if (missingEnvs.length) {
-  // Log so Vercel/hosted logs show missing config
   console.error('Missing required environment variables:', missingEnvs.join(', '));
 }
 
@@ -62,10 +61,10 @@ export default async function handler(req, res) {
       const idData = spotifyIdentity.identity_data || {};
       access_token = idData.access_token || idData.accessToken || idData.token || null;
       refresh_token = idData.refresh_token || null;
-      // expiry may not be provided; keep null if unknown
+      
       if (!access_token) return res.status(400).json({ error: 'no_provider_tokens' });
     } else {
-      // Legacy: Exchange code for tokens (PKCE/manual) — keep for backward compatibility
+      // Legacy: Exchange code for tokens (PKCE/manual)
       if (!code_verifier) return res.status(400).json({ error: 'missing_code_or_verifier' });
 
       const tokenData = await spotifyToken({
@@ -84,15 +83,17 @@ export default async function handler(req, res) {
       expires_in = tokenData.expires_in;
     }
 
-    // Get Spotify profile using the access token (from provider identity or exchange)
+    // Get Spotify profile using the access token
     const profileRes = await fetch('https://api.spotify.com/v1/me', {
       headers: { Authorization: `Bearer ${access_token}` },
     });
+    
     if (!profileRes.ok) {
       const pd = await profileRes.text().catch(() => '');
       console.error('Failed to fetch spotify profile', profileRes.status, pd);
       return res.status(400).json({ error: 'failed_fetch_spotify_profile' });
     }
+    
     const profile = await profileRes.json();
     const spotify_id = profile.id;
 
@@ -103,33 +104,51 @@ export default async function handler(req, res) {
         const { data: userRes } = await supabaseAdmin.auth.getUser(supabaseToken);
         authUid = userRes?.user?.id || null;
       } catch (e) {
-        // ignore — we'll still upsert by spotify_id
+        console.error('Error getting user from Supabase token:', e);
       }
     }
 
     const expiry = expires_in ? Date.now() + (expires_in * 1000) : null;
 
-    // Upsert into users table using service role
-    const upsertObj = {
-      spotify_id,
+    // Construir objeto de actualización
+    const updateData = {
+      spotify_id: spotify_id,
       email: profile.email || null,
       display_name: profile.display_name || null,
       profile_image: profile.images?.[0]?.url || null,
       country: profile.country || null,
       product: profile.product || null,
-      refresh_token,
-      access_token,
+      refresh_token: refresh_token, // Guardamos el refresh token
+      access_token: access_token,
       token_expiry: expiry,
+      updated_at: new Date().toISOString()
     };
-    if (authUid) upsertObj.auth_uid = authUid;
 
-    await supabaseAdmin.from('users').upsert(upsertObj, { onConflict: 'spotify_id' });
+    // Si tenemos el ID de autenticación, lo usamos como clave primaria para asegurar
+    // que estamos actualizando el usuario correcto de Supabase Auth
+    if (authUid) {
+      updateData.id = authUid;
+      updateData.auth_uid = authUid;
+    }
+
+    // Realizar upsert.
+    // Si tenemos authUid, usamos 'id' como conflicto para actualizar ese usuario específico.
+    // Si no (modo solo backend/script), usamos 'spotify_id'.
+    const { error: upsertError } = await supabaseAdmin
+      .from('users')
+      .upsert(updateData, { 
+        onConflict: authUid ? 'id' : 'spotify_id' 
+      });
+
+    if (upsertError) {
+      console.error('Supabase Upsert Error:', upsertError);
+      // No fallamos la petición aquí para permitir que el frontend continúe,
+      // pero registramos el error.
+    }
 
     return res.status(200).json({ access_token, expires_in, spotify_id, profile });
   } catch (err) {
     console.error('exchange handler error', err);
-    console.error('exchange handler error', err);
-    // In development return the error message to help debugging; hide in production
     const devMessage = process.env.NODE_ENV !== 'production' ? (err?.message || err) : 'server_error';
     return res.status(500).json({ error: devMessage });
   }

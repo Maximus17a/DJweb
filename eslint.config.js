@@ -6,6 +6,8 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
   globalIgnores(['dist']),
+  
+  // Configuración general (Frontend)
   {
     files: ['**/*.{js,jsx}'],
     extends: [
@@ -15,7 +17,7 @@ export default defineConfig([
     ],
     languageOptions: {
       ecmaVersion: 2020,
-      globals: globals.browser,
+      globals: globals.browser, // Define globales del navegador (window, document, etc.)
       parserOptions: {
         ecmaVersion: 'latest',
         ecmaFeatures: { jsx: true },
@@ -24,6 +26,15 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+
+  // === AGREGA ESTO AL FINAL ===
+  // Configuración específica para Backend (API/Node)
+  {
+    files: ['api/**/*.js'], // Solo aplica a archivos dentro de 'api'
+    languageOptions: {
+      globals: globals.node, // Habilita 'process', 'Buffer', 'require', etc.
     },
   },
 ])
