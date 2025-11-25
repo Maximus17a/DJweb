@@ -1,4 +1,4 @@
-import { Buffer } from 'node:buffer';
+import { Buffer } from 'node:buffer'; // <--- CRÍTICO: Arregla el Error 500
 import { createClient } from '@supabase/supabase-js';
 
 const {
@@ -9,18 +9,13 @@ const {
   SPOTIFY_REDIRECT_URI,
 } = process.env;
 
-// Validación de seguridad
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
-  console.error('ERROR CRITICO: Faltan variables de entorno de Supabase en el servidor.');
-}
-
 const supabaseAdmin = createClient(
   SUPABASE_URL || 'https://placeholder.supabase.co',
   SUPABASE_SERVICE_ROLE || 'placeholder'
 );
 
 async function spotifyToken(params) {
-  return await fetch('https://accounts.spotify.com/api/token', {
+  return await fetch('https://accounts.spotify.com/api/token', { // URL Corregida
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -37,7 +32,7 @@ export default async function handler(req, res) {
     const authHeader = req.headers.authorization || '';
     const supabaseToken = authHeader.split(' ')[1];
     
-    // Extraemos los tokens enviados explícitamente desde el cliente
+    // Recibir tokens del frontend
     const { 
       code, 
       code_verifier, 
@@ -50,14 +45,14 @@ export default async function handler(req, res) {
     let refresh_token = null;
     let expires_in = null;
 
-    // CASO 1: Tokens enviados desde el cliente (Nuevo flujo robusto)
+    // CASO 1: Tokens enviados desde el cliente (Nuevo flujo)
     if (spotify_access_token) {
       console.log('Usando tokens enviados desde el cliente');
       access_token = spotify_access_token;
       refresh_token = spotify_refresh_token;
-      expires_in = 3600; // Estándar de Spotify
+      expires_in = 3600; 
     } 
-    // CASO 2: Código manual (PKCE)
+    // CASO 2: Código manual (PKCE - Legacy)
     else if (code) {
       const tokenData = await spotifyToken({
         grant_type: 'authorization_code',
@@ -72,7 +67,7 @@ export default async function handler(req, res) {
       refresh_token = tokenData.refresh_token;
       expires_in = tokenData.expires_in;
     } 
-    // CASO 3: Intentar recuperar de Supabase (Fallback, suele fallar por seguridad)
+    // CASO 3: Fallback (Suele fallar por seguridad de Supabase)
     else if (supabaseToken) {
       const { data: { user }, error } = await supabaseAdmin.auth.getUser(supabaseToken);
       if (!error && user) {
@@ -87,20 +82,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Could not retrieve access token' });
     }
 
-    // Obtener perfil de Spotify para verificar y obtener ID
-    const profileRes = await fetch('https://api.spotify.com/v1/me', {
+    // Validar token y obtener perfil
+    const profileRes = await fetch('https://api.spotify.com/v1/me', { // URL Corregida
       headers: { Authorization: `Bearer ${access_token}` },
     });
     
     if (!profileRes.ok) {
-      console.error('Fallo al obtener perfil de Spotify', profileRes.status);
       return res.status(profileRes.status).json({ error: 'Failed to fetch Spotify profile' });
     }
     
     const profile = await profileRes.json();
     const spotify_id = profile.id;
 
-    // Determinar authUid
+    // Determinar ID de usuario
     let authUid = null;
     if (supabaseToken) {
       const { data: { user } } = await supabaseAdmin.auth.getUser(supabaseToken);
@@ -117,7 +111,7 @@ export default async function handler(req, res) {
       country: profile.country,
       product: profile.product,
       access_token,
-      refresh_token, // Se guardará correctamente ahora
+      refresh_token, 
       token_expiry: expiry,
       updated_at: new Date().toISOString()
     };
@@ -127,6 +121,7 @@ export default async function handler(req, res) {
       updateData.auth_uid = authUid;
     }
 
+    // Guardar en DB
     const { error: upsertError } = await supabaseAdmin
       .from('users')
       .upsert(updateData, { onConflict: authUid ? 'id' : 'spotify_id' });

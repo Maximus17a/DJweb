@@ -1,4 +1,4 @@
-import { Buffer } from 'node:buffer';
+import { Buffer } from 'node:buffer'; // <--- CRÍTICO
 import { createClient } from '@supabase/supabase-js';
 
 const {
@@ -14,7 +14,7 @@ const supabaseAdmin = createClient(
 );
 
 async function spotifyToken(params) {
-  return await fetch('https://accounts.spotify.com/api/token', {
+  return await fetch('https://accounts.spotify.com/api/token', { // URL Corregida
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -35,7 +35,6 @@ export default async function handler(req, res) {
     const { data: { user }, error: userErr } = await supabaseAdmin.auth.getUser(supabaseToken);
     if (userErr || !user) return res.status(401).json({ error: 'Invalid token' });
 
-    // Buscar usuario en DB
     const { data: userRow } = await supabaseAdmin
       .from('users')
       .select('*')
@@ -43,10 +42,10 @@ export default async function handler(req, res) {
       .single();
 
     if (!userRow || !userRow.refresh_token) {
-      return res.status(404).json({ error: 'No refresh token found. Please login again.' });
+      return res.status(404).json({ error: 'No refresh token found' });
     }
 
-    // Verificar si el token actual aún es válido (margen de 5 min)
+    // Si el token aun sirve, lo devolvemos
     if (userRow.token_expiry && userRow.token_expiry > Date.now() + 300000) {
       return res.json({ access_token: userRow.access_token });
     }
@@ -58,22 +57,19 @@ export default async function handler(req, res) {
     });
 
     if (data.error) {
-      console.error('Spotify Refresh Error:', data);
       return res.status(400).json({ error: 'Failed to refresh token' });
     }
 
-    // Guardar nuevo token
     const newExpiry = Date.now() + (data.expires_in * 1000);
     await supabaseAdmin.from('users').update({
       access_token: data.access_token,
       token_expiry: newExpiry,
-      refresh_token: data.refresh_token || userRow.refresh_token // A veces Spotify rota el refresh token
+      refresh_token: data.refresh_token || userRow.refresh_token
     }).eq('id', user.id);
 
     return res.json({ access_token: data.access_token });
 
   } catch (err) {
-    console.error('Token handler crash:', err);
     return res.status(500).json({ error: err.message });
   }
 }

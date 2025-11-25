@@ -2,9 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { SPOTIFY_CONFIG } from '../utils/constants';
 import supabase from '../lib/supabaseClient';
 
-/**
- * Hook personalizado para manejar la autenticación de Spotify usando Supabase OAuth
- */
 export function useSpotifyAuth() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -17,7 +14,6 @@ export function useSpotifyAuth() {
     supabase.auth.getSession().then(({ data }) => {
       if (data && data.session) {
         setIsAuthenticated(true);
-        // Guardar token en memoria por si acaso
         if (data.session.provider_token) {
             inMemoryAccessTokenRef.current = data.session.provider_token;
         }
@@ -35,7 +31,6 @@ export function useSpotifyAuth() {
     checkAuth();
     authListenerRef.current = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' || session?.access_token) {
-        // Intentar recuperar el token de proveedor si está disponible
         inMemoryAccessTokenRef.current = session?.provider_token || null;
         setIsAuthenticated(true);
       } else if (event === 'SIGNED_OUT') {
@@ -49,9 +44,7 @@ export function useSpotifyAuth() {
         if (authListenerRef.current?.data?.subscription?.unsubscribe) {
           authListenerRef.current.data.subscription.unsubscribe();
         }
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     };
   }, []);
 
@@ -62,8 +55,8 @@ export function useSpotifyAuth() {
         redirectTo: SPOTIFY_CONFIG.REDIRECT_URI,
         scopes: SPOTIFY_CONFIG.SCOPES,
         queryParams: {
-          access_type: 'offline', // Necesario para refresh token
-          prompt: 'consent',      // Fuerza pantalla de consentimiento para asegurar refresh token
+          access_type: 'offline', // IMPORTANTE: Pide Refresh Token
+          prompt: 'consent',      // IMPORTANTE: Fuerza pantalla de aceptación
         }
       };
       await supabase.auth.signInWithOAuth({ provider: 'spotify', options });
@@ -78,27 +71,24 @@ export function useSpotifyAuth() {
       setIsLoading(true);
       setError(null);
       
-      // Esperar un poco para asegurar que la sesión se establezca
       const { data } = await supabase.auth.getSession();
       const session = data?.session;
       
       if (session) {
-        // Usamos el token de proveedor que viene directamente en la sesión
         const providerToken = session.provider_token;
         const providerRefreshToken = session.provider_refresh_token;
         
         inMemoryAccessTokenRef.current = providerToken;
         
-        // Enviamos los tokens explícitamente al backend
+        // ENVIAR TOKENS AL BACKEND MANUALMENTE
         try {
           const resp = await fetch('/api/spotify/exchange', {
             method: 'POST',
             headers: {
-              Authorization: `Bearer ${session.access_token}`, // Token de Supabase para Auth
+              Authorization: `Bearer ${session.access_token}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              // Enviamos los tokens de Spotify explícitamente
               spotify_access_token: providerToken,
               spotify_refresh_token: providerRefreshToken,
             }),
@@ -137,11 +127,8 @@ export function useSpotifyAuth() {
     setError(null);
   };
 
-  const getAccessToken = () => {
-    return inMemoryAccessTokenRef.current;
-  };
-
-  const refreshToken = async () => { return false; };
+  const getAccessToken = () => inMemoryAccessTokenRef.current;
+  const refreshToken = async () => false;
 
   return {
     isAuthenticated,
