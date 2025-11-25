@@ -1,5 +1,5 @@
+import { Buffer } from 'node:buffer';
 import { createClient } from '@supabase/supabase-js';
-import { Buffer } from 'node:buffer'; // <--- IMPORTANTE: Soluciona error de Buffer
 
 const {
   SUPABASE_URL,
@@ -15,12 +15,12 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
 }
 
 const supabaseAdmin = createClient(
-  SUPABASE_URL || 'https://placeholder.supabase.co', 
+  SUPABASE_URL || 'https://placeholder.supabase.co',
   SUPABASE_SERVICE_ROLE || 'placeholder'
 );
 
 async function spotifyToken(params) {
-  return await fetch('https://accounts.spotify.com/api/token', { // URL corregida
+  return await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -52,7 +52,7 @@ export default async function handler(req, res) {
       });
 
       if (tokenData.error) return res.status(400).json({ error: tokenData });
-      
+
       access_token = tokenData.access_token;
       refresh_token = tokenData.refresh_token;
       expires_in = tokenData.expires_in;
@@ -80,11 +80,11 @@ export default async function handler(req, res) {
     const profileRes = await fetch('https://api.spotify.com/v1/me', {
       headers: { Authorization: `Bearer ${access_token}` },
     });
-    
+
     if (!profileRes.ok) {
       return res.status(profileRes.status).json({ error: 'Failed to fetch Spotify profile' });
     }
-    
+
     const profile = await profileRes.json();
     const spotify_id = profile.id;
 

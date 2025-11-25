@@ -1,5 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
 import { Buffer } from 'node:buffer';
+import { createClient } from '@supabase/supabase-js';
 
 const {
   SUPABASE_URL,
@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     const { data: userRow } = await supabaseAdmin
       .from('users')
       .select('*')
-      .eq('id', user.id) // Usamos ID directo ya que el trigger debió crearlo
+      .eq('id', user.id)
       .single();
 
     if (!userRow || !userRow.refresh_token) {
