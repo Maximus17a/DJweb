@@ -76,7 +76,7 @@ export function useSpotifyAuth() {
       if (session && session.access_token) {
         inMemoryAccessTokenRef.current = session.access_token;
         
-        // === CAMBIO IMPORTANTE: Verificar respuesta del servidor ===
+        // === CAMBIO: Hacer la sincronización opcional (no bloquear login) ===
         try {
           const resp = await fetch('/api/spotify/exchange', {
             method: 'POST',
@@ -89,16 +89,16 @@ export function useSpotifyAuth() {
           
           if (!resp.ok) {
             const errText = await resp.text();
-            console.error('Sync failed:', resp.status, errText);
-            throw new Error(`Fallo en sincronización (${resp.status}). Revisa SUPABASE_SERVICE_ROLE.`);
+            console.warn('⚠️ Sync with server failed (non-critical):', resp.status, errText);
+            console.warn('La app funcionará pero los tokens no se guardarán en la base de datos.');
+            console.warn('Para habilitar persistencia, configura las variables de entorno del servidor.');
+          } else {
+            console.log('✅ Tokens sincronizados con el servidor correctamente.');
           }
         } catch (e) {
-          console.error('Failed to sync spotify identity with server:', e);
-          // Si falla la sincronización, no permitimos el acceso porque fallará después
-          setIsLoading(false);
-          setError(e.message || 'Error de configuración en el servidor.');
-          await supabase.auth.signOut(); // Limpiamos la sesión para intentar de nuevo
-          return false; 
+          console.warn('⚠️ Failed to sync spotify identity with server (non-critical):', e);
+          console.warn('La app funcionará en modo solo-cliente sin persistencia de tokens.');
+          // NO hacemos signOut aquí - permitimos que la app funcione sin sincronización
         }
 
         setIsAuthenticated(true);

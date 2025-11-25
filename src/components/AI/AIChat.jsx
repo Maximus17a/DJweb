@@ -94,7 +94,7 @@ export default function AIChat() {
     push('ai', 'Consultando al modelo...');
     setBusy(true);
     try {
-      const resp = await fetch('/api/ai', {
+      const resp = await fetch('/api/ai_groq', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text }),
