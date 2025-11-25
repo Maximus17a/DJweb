@@ -2,7 +2,7 @@
 export const SPOTIFY_CONFIG = {
   CLIENT_ID: import.meta.env.VITE_SPOTIFY_CLIENT_ID,
   // Prioritize current window origin to ensure redirects work on Vercel/Preview deployments automatically
-  REDIRECT_URI: (typeof window !== 'undefined') ? `${window.location.origin}/callback` : (import.meta.env.VITE_REDIRECT_URI || 'http://localhost:3000/callback'),
+  REDIRECT_URI: (typeof window !== 'undefined') ? `${window.location.origin}/callback` : (import.meta.env.VITE_REDIRECT_URI || 'http://localhost:https://neonflow-ai-dj.vercel.app/callback/callback'),
   AUTH_ENDPOINT: 'https://accounts.spotify.com/authorize',
   TOKEN_ENDPOINT: 'https://accounts.spotify.com/api/token',
   SCOPES: [
