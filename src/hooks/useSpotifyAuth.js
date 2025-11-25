@@ -13,11 +13,14 @@ export function useSpotifyAuth() {
   const inMemoryAccessTokenRef = useRef(null);
   const authListenerRef = useRef(null);
 
-  // Declarar checkAuth antes del useEffect para evitar error de dependencias
   const checkAuth = () => {
     supabase.auth.getSession().then(({ data }) => {
       if (data && data.session) {
         setIsAuthenticated(true);
+        // Guardar token en memoria por si acaso
+        if (data.session.provider_token) {
+            inMemoryAccessTokenRef.current = data.session.provider_token;
+        }
       } else {
         setIsAuthenticated(false);
       }
@@ -32,7 +35,8 @@ export function useSpotifyAuth() {
     checkAuth();
     authListenerRef.current = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' || session?.access_token) {
-        inMemoryAccessTokenRef.current = session?.access_token || null;
+        // Intentar recuperar el token de proveedor si está disponible
+        inMemoryAccessTokenRef.current = session?.provider_token || null;
         setIsAuthenticated(true);
       } else if (event === 'SIGNED_OUT') {
         inMemoryAccessTokenRef.current = null;
@@ -44,11 +48,9 @@ export function useSpotifyAuth() {
       try {
         if (authListenerRef.current?.data?.subscription?.unsubscribe) {
           authListenerRef.current.data.subscription.unsubscribe();
-        } else if (typeof authListenerRef.current?.unsubscribe === 'function') {
-          authListenerRef.current.unsubscribe();
         }
       } catch {
-        // ignore unsubscribe errors
+        // ignore
       }
     };
   }, []);
@@ -58,7 +60,11 @@ export function useSpotifyAuth() {
       setError(null);
       const options = {
         redirectTo: SPOTIFY_CONFIG.REDIRECT_URI,
-        scopes: SPOTIFY_CONFIG.SCOPES
+        scopes: SPOTIFY_CONFIG.SCOPES,
+        queryParams: {
+          access_type: 'offline', // Necesario para refresh token
+          prompt: 'consent',      // Fuerza pantalla de consentimiento para asegurar refresh token
+        }
       };
       await supabase.auth.signInWithOAuth({ provider: 'spotify', options });
     } catch (err) {
@@ -71,35 +77,40 @@ export function useSpotifyAuth() {
     try {
       setIsLoading(true);
       setError(null);
+      
+      // Esperar un poco para asegurar que la sesión se establezca
       const { data } = await supabase.auth.getSession();
       const session = data?.session;
       
-      if (session && session.access_token) {
-        inMemoryAccessTokenRef.current = session.access_token;
+      if (session) {
+        // Usamos el token de proveedor que viene directamente en la sesión
+        const providerToken = session.provider_token;
+        const providerRefreshToken = session.provider_refresh_token;
         
-        // === CAMBIO: Hacer la sincronización opcional (no bloquear login) ===
+        inMemoryAccessTokenRef.current = providerToken;
+        
+        // Enviamos los tokens explícitamente al backend
         try {
           const resp = await fetch('/api/spotify/exchange', {
             method: 'POST',
             headers: {
-              Authorization: `Bearer ${session.access_token}`,
+              Authorization: `Bearer ${session.access_token}`, // Token de Supabase para Auth
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({}),
+            body: JSON.stringify({
+              // Enviamos los tokens de Spotify explícitamente
+              spotify_access_token: providerToken,
+              spotify_refresh_token: providerRefreshToken,
+            }),
           });
           
           if (!resp.ok) {
-            const errText = await resp.text();
-            console.warn('⚠️ Sync with server failed (non-critical):', resp.status, errText);
-            console.warn('La app funcionará pero los tokens no se guardarán en la base de datos.');
-            console.warn('Para habilitar persistencia, configura las variables de entorno del servidor.');
+            console.warn('Sync warning:', await resp.text());
           } else {
-            console.log('✅ Tokens sincronizados con el servidor correctamente.');
+            console.log('Tokens guardados correctamente en DB');
           }
         } catch (e) {
-          console.warn('⚠️ Failed to sync spotify identity with server (non-critical):', e);
-          console.warn('La app funcionará en modo solo-cliente sin persistencia de tokens.');
-          // NO hacemos signOut aquí - permitimos que la app funcione sin sincronización
+          console.warn('Error contactando endpoint de intercambio:', e);
         }
 
         setIsAuthenticated(true);
@@ -130,7 +141,6 @@ export function useSpotifyAuth() {
     return inMemoryAccessTokenRef.current;
   };
 
-  // Placeholder para compatibilidad
   const refreshToken = async () => { return false; };
 
   return {
