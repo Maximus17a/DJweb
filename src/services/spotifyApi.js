@@ -1,6 +1,5 @@
 import axios from 'axios';
-import { SPOTIFY_API, SPOTIFY_CONFIG, STORAGE_KEYS } from '../utils/constants';
-import supabase from '../lib/supabaseClient';
+import { SPOTIFY_API, STORAGE_KEYS } from '../utils/constants';
 
 /**
  * Instancia de Axios configurada para la API de Spotify
@@ -16,42 +15,13 @@ const spotifyAxios = axios.create({
  * Interceptor para añadir el token de acceso a todas las peticiones
  */
 spotifyAxios.interceptors.request.use(
-  async (config) => {
-    try {
-      // Preferir token gestionado por el servidor via sesión de Supabase
-      const { data: sessionData } = await supabase.auth.getSession();
-      const supabaseToken = sessionData?.session?.access_token;
-      
-      if (supabaseToken) {
-        try {
-          const resp = await fetch('/api/spotify/token', {
-            method: 'GET',
-            headers: { Authorization: `Bearer ${supabaseToken}` },
-          });
-          if (resp.ok) {
-            const d = await resp.json();
-            if (d?.access_token) {
-              config.headers = config.headers || {};
-              config.headers.Authorization = `Bearer ${d.access_token}`;
-              return config;
-            }
-          }
-        } catch (e) {
-          console.warn('[spotifyApi] Failed to get server token', e);
-        }
-      }
+  (config) => {
+    // Leer token directamente de localStorage (gestionado por useSpotifyAuth)
+    const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
 
-      // Fallback: intentar localStorage (compatibilidad hacia atrás)
-      const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN)
-        || localStorage.getItem('spotify_access_token')
-        || localStorage.getItem('access_token');
-
-      if (token) {
-        config.headers = config.headers || {};
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-    } catch (err) {
-      console.warn('[spotifyApi] request interceptor error', err);
+    if (token) {
+      config.headers = config.headers || {};
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
@@ -59,52 +29,78 @@ spotifyAxios.interceptors.request.use(
 );
 
 /**
- * Interceptor para manejar errores de autenticación
+ * Variable para controlar si ya se está refrescando el token
+ * para evitar múltiples llamadas simultáneas.
+ */
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
+/**
+ * Interceptor para manejar errores de autenticación (401)
  */
 spotifyAxios.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const status = error.response?.status;
+    const originalRequest = error.config;
 
-    if (status === 401) {
-      // Intentar refresh del lado del servidor primero
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const supabaseToken = sessionData?.session?.access_token;
-        if (supabaseToken) {
-          const resp = await fetch('/api/spotify/token', {
-            method: 'GET',
-            headers: { Authorization: `Bearer ${supabaseToken}` },
+    // Si el error es 401 (No autorizado) y no hemos reintentado aún
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        // Si ya estamos refrescando, encolar la petición
+        return new Promise((resolve, reject) => {
+          failedQueue.push({
+            resolve: (token) => {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+              resolve(spotifyAxios(originalRequest));
+            },
+            reject: (err) => reject(err),
           });
-          if (resp.ok) {
-            const d = await resp.json();
-            const originalRequest = error.config;
-            if (d?.access_token && originalRequest) {
-              originalRequest.headers = originalRequest.headers || {};
-              originalRequest.headers.Authorization = `Bearer ${d.access_token}`;
-              return spotifyAxios.request(originalRequest);
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('[spotifyApi] server refresh failed', e);
+        });
       }
 
-      // === FIX: Cerrar sesión completamente para evitar recarga infinita ===
-      console.warn('Sesión expirada o inválida. Cerrando sesión...');
-      
-      // 1. Limpiar localStorage
-      localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
-      localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-      localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
-      
-      // 2. Cerrar sesión en Supabase explícitamente
-      await supabase.auth.signOut();
+      originalRequest._retry = true;
+      isRefreshing = true;
 
-      // 3. Redirigir al login
-      window.location.href = '/login';
-      
-      return Promise.reject(error);
+      try {
+        // Intentar refrescar el token usando nuestro backend
+        const newToken = await attemptRefreshToken();
+        
+        // Procesar la cola de peticiones fallidas con el nuevo token
+        processQueue(null, newToken);
+        
+        // Reintentar la petición original
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        return spotifyAxios(originalRequest);
+      } catch (err) {
+        processQueue(err, null);
+        
+        // Si falla el refresh, cerrar sesión completamente
+        console.warn('Sesión expirada. Cerrando sesión...');
+        localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
+        localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
+        localStorage.removeItem(STORAGE_KEYS.TOKEN_EXPIRY);
+        localStorage.removeItem('spotify_user_profile');
+        
+        // Redirigir al login si no estamos ya allí
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+        
+        return Promise.reject(err);
+      } finally {
+        isRefreshing = false;
+      }
     }
 
     return Promise.reject(error);
@@ -112,34 +108,36 @@ spotifyAxios.interceptors.response.use(
 );
 
 /**
- * Intenta refrescar el token usando el refresh token almacenado en localStorage.
+ * Refresca el token llamando a nuestro backend propio
  */
 async function attemptRefreshToken() {
   const refreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
+  
   if (!refreshToken) {
     throw new Error('No refresh token available');
   }
 
-  const params = new URLSearchParams({
-    client_id: SPOTIFY_CONFIG.CLIENT_ID,
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-  });
-
-  const resp = await fetch(SPOTIFY_CONFIG.TOKEN_ENDPOINT, {
+  // Llamada a NUESTRO backend, no a Spotify directo
+  const resp = await fetch('/api/spotify/token', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params.toString(),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refreshToken }),
   });
 
   if (!resp.ok) {
-    throw new Error('Failed to refresh token');
+    const errData = await resp.json().catch(() => ({}));
+    throw new Error(errData.error || 'Failed to refresh token');
   }
 
   const data = await resp.json();
+  
+  // Guardar nuevos tokens
   const expiryTime = Date.now() + (data.expires_in * 1000);
+  
   localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
   localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, expiryTime.toString());
+  
+  // A veces el refresh rota el token de refresco también
   if (data.refresh_token) {
     localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token);
   }
@@ -147,16 +145,11 @@ async function attemptRefreshToken() {
   return data.access_token;
 }
 
-// --- Exportaciones de funciones de la API ---
+// --- Exportaciones de funciones de la API (Sin cambios en la lógica interna) ---
 
 export async function getCurrentUser() {
-  try {
-    const response = await spotifyAxios.get(SPOTIFY_API.ENDPOINTS.ME);
-    return response.data;
-  } catch (error) {
-    console.error('Error fetching current user:', error);
-    throw error;
-  }
+  const response = await spotifyAxios.get(SPOTIFY_API.ENDPOINTS.ME);
+  return response.data;
 }
 
 export async function searchTracks(query, limit = 20) {
@@ -177,19 +170,9 @@ export async function getAudioFeatures(trackId) {
       `${SPOTIFY_API.ENDPOINTS.AUDIO_FEATURES}/${trackId}`
     );
     return response.data;
-  } catch (error) {
-    const status = error.response?.status;
-    if (status === 401 || status === 403) {
-      try {
-        await attemptRefreshToken();
-        const retryResp = await spotifyAxios.get(
-          `${SPOTIFY_API.ENDPOINTS.AUDIO_FEATURES}/${trackId}`
-        );
-        return retryResp.data;
-      } catch {
-        return null;
-      }
-    }
+  } catch {
+    // Si falla, el interceptor ya habrá intentado el refresh. 
+    // Si llega aquí es que falló definitivamente o es un 404.
     return null;
   }
 }
