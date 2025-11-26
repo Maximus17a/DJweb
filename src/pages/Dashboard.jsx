@@ -7,7 +7,8 @@ import WebPlayback from '../components/Player/WebPlayback';
 import QueueManager from '../components/AI/QueueManager';
 import AIChat from '../components/AI/AIChat';
 import { usePlayer } from '../context/PlayerContext';
-import { getAudioFeatures } from '../services/spotifyApi';
+// Eliminamos la importación de getAudioFeatures porque ya no la usaremos
+// import { getAudioFeatures } from '../services/spotifyApi'; 
 
 export default function Dashboard() {
   const { addToQueue } = usePlayer();
@@ -17,26 +18,15 @@ export default function Dashboard() {
     try {
       let trackWithFeatures = { ...track };
       
-      try {
-        // Intentar obtener audio features solo si tenemos ID
-        if (track.id) {
-          const features = await getAudioFeatures(track.id);
-          if (features) {
-            trackWithFeatures.audioFeatures = features;
-          } else {
-             throw new Error('No features returned');
-          }
-        }
-      } catch (featureError) {
-        // Silenciosamente ignorar error de features y usar defaults
-        trackWithFeatures.audioFeatures = {
-          tempo: 0,
-          energy: 0,
-          key: 0,
-          mode: 1,
-          danceability: 0
-        };
-      }
+      // CAMBIO: Ya no pedimos datos a Spotify para evitar el error 403.
+      // Asignamos valores base. La IA (Groq) los calculará si le damos a "Optimizar".
+      trackWithFeatures.audioFeatures = {
+        tempo: 0,        // Se mostrará como 0 BPM hasta que la IA lo analice
+        energy: 0,
+        key: 0,
+        mode: 1,
+        danceability: 0
+      };
 
       await addToQueue(trackWithFeatures);
       
