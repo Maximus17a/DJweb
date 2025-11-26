@@ -18,14 +18,15 @@ export const SPOTIFY_CONFIG = {
 };
 
 // Spotify API Configuration
+// Spotify API Configuration
 export const SPOTIFY_API = {
-  BASE_URL: 'https://api.spotify.com/v1',
+  BASE_URL: 'https://api.spotify.com/v1', // <--- URL OFICIAL Y CORRECTA
   ENDPOINTS: {
     ME: '/me',
     SEARCH: '/search',
     TRACKS: '/tracks',
     AUDIO_FEATURES: '/audio-features',
-    RECOMMENDATIONS: '/recommendations', // <--- NUEVO
+    RECOMMENDATIONS: '/recommendations',
     PLAYLISTS: '/me/playlists',
     PLAYER: '/me/player',
     DEVICES: '/me/player/devices',

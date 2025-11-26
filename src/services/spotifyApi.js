@@ -196,20 +196,23 @@ export async function transferPlayback(deviceId, play = true) {
 
 export async function getRecommendations(seedTrackId, limit = 5) {
   const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
-  if (!token) {
-    console.warn('No token for recommendations');
+  if (!token || !seedTrackId) return [];
+
+  // Verificación extra: Si el ID parece de un archivo local, no pedimos recomendaciones
+  if (seedTrackId.includes('local')) {
+    console.log('Skipping recommendations for local track');
     return [];
   }
 
   try {
-    // Usamos fetch directo para depuración total y evitar problemas de axios interceptors ocultos
-    const url = new URL('https://api.spotify.com/v1/recommendations');
-    url.searchParams.append('seed_tracks', seedTrackId);
-    url.searchParams.append('limit', limit);
-    // Añadimos parámetros obligatorios para mejorar la respuesta
-    url.searchParams.append('min_popularity', '50'); 
+    const params = new URLSearchParams({
+      seed_tracks: seedTrackId,
+      limit: limit.toString(),
+      min_popularity: '20' // Filtro para evitar canciones rotas
+    });
 
-    const response = await fetch(url.toString(), {
+    // Usamos la URL absoluta para asegurar que no haya errores de base
+    const response = await fetch(`https://api.spotify.com/v1/recommendations?${params.toString()}`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -218,16 +221,20 @@ export async function getRecommendations(seedTrackId, limit = 5) {
     });
 
     if (!response.ok) {
-      // Si falla, lanzamos error con el texto para saber qué dice Spotify
-      const errorText = await response.text();
-      console.error('Spotify Recs Error:', response.status, errorText);
+      // Si es 404, simplemente no hay recomendaciones, devolvemos array vacío sin error
+      if (response.status === 404) {
+        console.warn(`No recommendations found for track ${seedTrackId}`);
+        return [];
+      }
       throw new Error(`Spotify API Error: ${response.status}`);
     }
 
     const data = await response.json();
     return data.tracks || [];
+    
   } catch (error) {
-    console.warn('Error fetching recommendations:', error);
+    // Silenciamos el error en consola para no ensuciar, solo devolvemos vacío
+    console.warn('Recommendation fetch skipped:', error.message);
     return [];
   }
 }
