@@ -100,15 +100,7 @@ export async function searchTracks(query, limit = 20) {
 }
 
 // Nueva función para el análisis profundo de la estructura (Drops, Beats)
-export async function getAudioAnalysis(trackId) {
-  try {
-    const response = await spotifyAxios.get(`/audio-analysis/${trackId}`);
-    return response.data;
-  } catch (error) {
-    console.warn('Error fetching audio analysis:', error);
-    return null;
-  }
-}
+
 
 export async function getAudioFeatures(trackId) {
   try {

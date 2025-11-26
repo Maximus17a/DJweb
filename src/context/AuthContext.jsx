@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useSpotifyAuth } from '../hooks/useSpotifyAuth';
 import { getCurrentUser } from '../services/spotifyApi';
 
@@ -9,14 +9,8 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [isLoadingUser, setIsLoadingUser] = useState(false);
 
-  // Cargar datos del usuario cuando se autentica
-  useEffect(() => {
-    if (auth.isAuthenticated && !user && !isLoadingUser) {
-      loadUser();
-    }
-  }, [auth.isAuthenticated]);
-
-  const loadUser = async () => {
+  // Envolvemos en useCallback para que la función sea estable y válida como dependencia
+  const loadUser = useCallback(async () => {
     try {
       setIsLoadingUser(true);
       const userData = await getCurrentUser();
@@ -26,7 +20,14 @@ export function AuthProvider({ children }) {
     } finally {
       setIsLoadingUser(false);
     }
-  };
+  }, []);
+
+  // Cargar datos del usuario cuando se autentica
+  useEffect(() => {
+    if (auth.isAuthenticated && !user && !isLoadingUser) {
+      loadUser();
+    }
+  }, [auth.isAuthenticated, user, isLoadingUser, loadUser]); // Dependencias completas
 
   const value = {
     ...auth,
@@ -38,6 +39,7 @@ export function AuthProvider({ children }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {

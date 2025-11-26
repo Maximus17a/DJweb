@@ -3,7 +3,7 @@ import { useAuth } from './AuthContext';
 import { PLAYER_CONFIG, AI_CONFIG } from '../utils/constants';
 import { optimizeQueue } from '../utils/bpmMatcher';
 // Eliminamos getMultipleAudioFeatures porque ahora usamos la IA
-import { getRecommendations, getAudioAnalysis } from '../services/spotifyApi'; 
+import { getRecommendations,  } from '../services/spotifyApi'; 
 
 const PlayerContext = createContext(null);
 
@@ -116,7 +116,9 @@ export function PlayerProvider({ children }) {
     }
     if (playerRef.current) await playerRef.current.setVolume(startVolume);
   }, [volume, nextTrack]);
-
+/**
+   * Función DJ Mode (100% IA - Sin errores 403)
+   */
   const performSmartMix = useCallback(async () => {
     const currentQ = queueRef.current;
     const currentIndex = queueIndexRef.current;
@@ -128,26 +130,22 @@ export function PlayerProvider({ children }) {
 
     const nextTrackItem = currentQ[currentIndex + 1];
     
+    // Construimos el objeto con SOLO los datos básicos (Nombre y Artista)
+    // La IA se encargará de "recordar" el resto.
+    const trackData = {
+      current: {
+        name: currentTrack?.name || 'Unknown',
+        artist: currentTrack?.artists?.[0]?.name || 'Unknown',
+      },
+      next: {
+        name: nextTrackItem.name,
+        artist: nextTrackItem.artists?.[0]?.name || 'Unknown',
+      }
+    };
+
     try {
-      const analysis = await getAudioAnalysis(nextTrackItem.id);
-
-      const trackData = {
-        current: {
-          name: currentTrack?.name || 'Unknown',
-          artist: currentTrack?.artists?.[0]?.name || 'Unknown',
-          bpm: currentTrack?.audioFeatures?.tempo || 120,
-          energy: currentTrack?.audioFeatures?.energy || 0.5
-        },
-        next: {
-          name: nextTrackItem.name,
-          artist: nextTrackItem.artists?.[0]?.name || 'Unknown',
-          bpm: nextTrackItem.audioFeatures?.tempo || 120,
-          energy: nextTrackItem.audioFeatures?.energy || 0.5,
-          analysis: analysis || {}
-        }
-      };
-
-      console.log('🎧 DJ AI Analizando...');
+      console.log('🎧 DJ AI analizando estructura y letra (Modo Conocimiento)...');
+      
       const response = await fetch('/api/ai_groq', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -155,16 +153,19 @@ export function PlayerProvider({ children }) {
       });
       
       const { mixData } = await response.json();
-      console.log('🎚️ Plan:', mixData);
+      console.log('🎚️ Plan de Mezcla:', mixData);
       
+      // Ejecutar la transición con los datos inventados/estimados por la IA
       await executeTransition(
         mixData?.fadeDuration || 5000,
         mixData?.cuePoint || 0
       );
+      
       return mixData?.rationale;
 
     } catch (error) {
-      console.error('Error mix:', error);
+      console.error('Error en smart mix:', error);
+      // Si falla la IA, hacemos transición normal
       await nextTrack();
     }
   }, [currentTrack, executeTransition, nextTrack]);
