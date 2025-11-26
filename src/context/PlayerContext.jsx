@@ -45,7 +45,7 @@ export function PlayerProvider({ children }) {
     if (!playerRef.current || !deviceId) return;
     
     try {
-      await fetch(`https://api.spotify.com/v1/me/player/play?device_id=$${deviceId}`, {
+      await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
         method: 'PUT',
         body: JSON.stringify({ uris: [track.uri] }),
         headers: {
