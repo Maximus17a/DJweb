@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react'; // 1. Importamos useCallback
 import { Sparkles, Plus, RefreshCw } from 'lucide-react';
 import { usePlayer } from '../../context/PlayerContext';
 import { getRecommendations } from '../../services/spotifyApi';
@@ -8,13 +8,12 @@ export default function Recommendations() {
   const [recommendations, setRecommendations] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Función para cargar recomendaciones
-  const loadRecommendations = async () => {
+  // 2. Envolvemos la función en useCallback para que no cambie en cada render
+  const loadRecommendations = useCallback(async () => {
     if (!currentTrack) return;
     
     setLoading(true);
     try {
-      // Pedimos 5 recomendaciones basadas en la canción actual
       const tracks = await getRecommendations(currentTrack.id, 5);
       setRecommendations(tracks);
     } catch (error) {
@@ -22,14 +21,14 @@ export default function Recommendations() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentTrack]); // Dependencia: se recrea solo si cambia la canción
 
-  // Recargar cuando cambia la canción
+  // 3. Añadimos loadRecommendations a las dependencias del efecto
   useEffect(() => {
     if (currentTrack?.id) {
       loadRecommendations();
     }
-  }, [currentTrack?.id]);
+  }, [currentTrack?.id, loadRecommendations]);
 
   if (!currentTrack) return null;
 

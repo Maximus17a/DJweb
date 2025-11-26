@@ -195,16 +195,38 @@ export async function transferPlayback(deviceId, play = true) {
 }
 
 export async function getRecommendations(seedTrackId, limit = 5) {
+  const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
+  if (!token) {
+    console.warn('No token for recommendations');
+    return [];
+  }
+
   try {
-    const response = await spotifyAxios.get(SPOTIFY_API.ENDPOINTS.RECOMMENDATIONS, {
-      params: {
-        seed_tracks: seedTrackId,
-        limit,
-      },
+    // Usamos fetch directo para depuración total y evitar problemas de axios interceptors ocultos
+    const url = new URL('https://api.spotify.com/v1/recommendations');
+    url.searchParams.append('seed_tracks', seedTrackId);
+    url.searchParams.append('limit', limit);
+    // Añadimos parámetros obligatorios para mejorar la respuesta
+    url.searchParams.append('min_popularity', '50'); 
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
     });
-    return response.data.tracks;
+
+    if (!response.ok) {
+      // Si falla, lanzamos error con el texto para saber qué dice Spotify
+      const errorText = await response.text();
+      console.error('Spotify Recs Error:', response.status, errorText);
+      throw new Error(`Spotify API Error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.tracks || [];
   } catch (error) {
-    // CORREGIDO: Usamos la variable error
     console.warn('Error fetching recommendations:', error);
     return [];
   }
