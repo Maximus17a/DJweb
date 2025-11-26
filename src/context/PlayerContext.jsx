@@ -2,7 +2,8 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 import { useAuth } from './AuthContext';
 import { PLAYER_CONFIG, AI_CONFIG } from '../utils/constants';
 import { optimizeQueue } from '../utils/bpmMatcher';
-import { getRecommendations } from '../services/spotifyApi'; // Importamos recomendaciones
+// Eliminamos getMultipleAudioFeatures porque ahora usamos la IA
+import { getRecommendations, getAudioAnalysis } from '../services/spotifyApi'; 
 
 const PlayerContext = createContext(null);
 
@@ -22,32 +23,34 @@ export function PlayerProvider({ children }) {
   const [queueIndex, setQueueIndex] = useState(0);
   const [isAIMode, setIsAIMode] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [autoPlay, setAutoPlay] = useState(true); // Autoplay activado por defecto
+  const [autoPlay, setAutoPlay] = useState(true);
 
   // Refs
   const playerRef = useRef(null);
   const intervalRef = useRef(null);
   const isAIModeRef = useRef(isAIMode);
-  const isProcessingRef = useRef(false); // Candado para evitar saltos dobles
+  const isProcessingRef = useRef(false);
   const handleTrackEndRef = useRef(null);
   const queueRef = useRef(queue);
   const queueIndexRef = useRef(queueIndex);
   const autoPlayRef = useRef(autoPlay);
 
-  // Sincronizar Refs
   useEffect(() => { isAIModeRef.current = isAIMode; }, [isAIMode]);
   useEffect(() => { queueRef.current = queue; }, [queue]);
   useEffect(() => { queueIndexRef.current = queueIndex; }, [queueIndex]);
   useEffect(() => { autoPlayRef.current = autoPlay; }, [autoPlay]);
 
-  // --- FUNCIONES DE REPRODUCCIÓN ---
+  // --- FUNCIONES ---
 
-  const playTrack = useCallback(async (track) => {
+  const playTrack = useCallback(async (track, startPosition = 0) => {
     if (!playerRef.current || !deviceId) return;
     try {
       await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
         method: 'PUT',
-        body: JSON.stringify({ uris: [track.uri] }),
+        body: JSON.stringify({ 
+          uris: [track.uri],
+          position_ms: startPosition
+        }),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${getAccessToken()}`,
@@ -61,17 +64,16 @@ export function PlayerProvider({ children }) {
     }
   }, [deviceId, getAccessToken]);
 
-  const nextTrack = useCallback(async () => {
+  const nextTrack = useCallback(async (startPos = 0) => {
     const currentQ = queueRef.current;
     const currentIndex = queueIndexRef.current;
 
     if (currentIndex < currentQ.length - 1) {
       const nextIndex = currentIndex + 1;
       setQueueIndex(nextIndex);
-      await playTrack(currentQ[nextIndex]);
+      await playTrack(currentQ[nextIndex], startPos);
     } else if (autoPlayRef.current) {
-      // Autoplay: Si no hay más canciones, buscar similares
-      console.log('Cola terminada. Buscando recomendaciones...');
+      console.log('Autoplay...');
       const lastTrack = currentQ[currentQ.length - 1] || currentTrack;
       if (lastTrack) {
         try {
@@ -79,19 +81,15 @@ export function PlayerProvider({ children }) {
           if (recommendations.length > 0) {
             const newQueue = [...currentQ, ...recommendations];
             setQueue(newQueue);
-            setQueueIndex(currentIndex + 1); // Avanzar al primero de los nuevos
-            await playTrack(recommendations[0]);
+            setQueueIndex(currentIndex + 1);
+            await playTrack(recommendations[0], startPos);
           }
-        } catch (e) {
-          console.error('Error en autoplay:', e);
-        }
+        } catch (e) { console.error(e); }
       }
     }
-  }, [playTrack, currentTrack]); // Dependencias simplificadas gracias a los Refs
+  }, [playTrack, currentTrack]);
 
-  // --- LÓGICA DE TRANSICIÓN Y AI ---
-
-  const executeTransition = useCallback(async (durationMs) => {
+  const executeTransition = useCallback(async (durationMs, cuePointSeconds = 0) => {
     if (!playerRef.current) return;
     const steps = 20;
     const stepTime = durationMs / steps;
@@ -104,9 +102,10 @@ export function PlayerProvider({ children }) {
       await new Promise(r => setTimeout(r, stepTime));
     }
 
-    await nextTrack();
+    // Cambiar Pista
+    const cuePointMs = Math.round(cuePointSeconds * 1000);
+    await nextTrack(cuePointMs);
 
-    // Buffer wait
     await new Promise(r => setTimeout(r, 800));
     
     // Fade In
@@ -122,65 +121,76 @@ export function PlayerProvider({ children }) {
     const currentQ = queueRef.current;
     const currentIndex = queueIndexRef.current;
     
-    // Si no hay siguiente canción, usamos nextTrack que manejará el Autoplay
     if (currentIndex >= currentQ.length - 1) {
         await nextTrack();
-        return;
+        return "Autoplay activado";
     }
 
     const nextTrackItem = currentQ[currentIndex + 1];
-    const trackData = {
-      current: {
-        name: currentTrack?.name || 'Unknown',
-        bpm: currentTrack?.audioFeatures?.tempo || 120,
-        energy: currentTrack?.audioFeatures?.energy || 0.5
-      },
-      next: {
-        name: nextTrackItem.name,
-        bpm: nextTrackItem.audioFeatures?.tempo || 120,
-        energy: nextTrackItem.audioFeatures?.energy || 0.5
-      }
-    };
-
+    
     try {
+      const analysis = await getAudioAnalysis(nextTrackItem.id);
+
+      const trackData = {
+        current: {
+          name: currentTrack?.name || 'Unknown',
+          artist: currentTrack?.artists?.[0]?.name || 'Unknown',
+          bpm: currentTrack?.audioFeatures?.tempo || 120,
+          energy: currentTrack?.audioFeatures?.energy || 0.5
+        },
+        next: {
+          name: nextTrackItem.name,
+          artist: nextTrackItem.artists?.[0]?.name || 'Unknown',
+          bpm: nextTrackItem.audioFeatures?.tempo || 120,
+          energy: nextTrackItem.audioFeatures?.energy || 0.5,
+          analysis: analysis || {}
+        }
+      };
+
       console.log('🎧 DJ AI Analizando...');
       const response = await fetch('/api/ai_groq', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: 'dj_mix', trackData })
       });
+      
       const { mixData } = await response.json();
-      console.log('🎚️ Mezcla:', mixData);
-      await executeTransition(mixData?.fadeDuration || 5000);
+      console.log('🎚️ Plan:', mixData);
+      
+      await executeTransition(
+        mixData?.fadeDuration || 5000,
+        mixData?.cuePoint || 0
+      );
+      return mixData?.rationale;
+
     } catch (error) {
       console.error('Error mix:', error);
       await nextTrack();
     }
   }, [currentTrack, executeTransition, nextTrack]);
 
-  // --- MANEJADOR DE FIN DE PISTA ---
+  // --- MANEJADOR DE EVENTOS ---
 
   const handleTrackEnd = useCallback(async () => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
 
-    console.log('Track finalizado. Avanzando...');
     if (isAIModeRef.current) {
       await performSmartMix();
     } else {
       await nextTrack();
     }
 
-    // Liberar el candado después de un tiempo seguro
     setTimeout(() => { isProcessingRef.current = false; }, 3000);
   }, [nextTrack, performSmartMix]);
 
   useEffect(() => { handleTrackEndRef.current = handleTrackEnd; }, [handleTrackEnd]);
 
-  // --- SETUP DEL PLAYER ---
+  // --- INICIALIZACIÓN ---
 
   useEffect(() => {
     if (!isAuthenticated) return;
+
     const script = document.createElement('script');
     script.src = 'https://sdk.scdn.co/spotify-player.js';
     script.async = true;
@@ -210,16 +220,10 @@ export function PlayerProvider({ children }) {
         setPosition(state.position);
         setDuration(state.duration);
 
-        // Detección de fin de canción
-        // Si no está pausado y queda menos de 1.5s, activamos el cambio
         if (!state.paused && state.position > 0 && state.duration > 0) {
           const remaining = state.duration - state.position;
           if (remaining < 1500 && !isProcessingRef.current) {
              if (handleTrackEndRef.current) handleTrackEndRef.current();
-          }
-          // Resetear candado si el usuario retrocedió
-          if (remaining > 5000) {
-             isProcessingRef.current = false;
           }
         }
       });
@@ -232,12 +236,13 @@ export function PlayerProvider({ children }) {
     return () => { if (playerRef.current) playerRef.current.disconnect(); };
   }, [isAuthenticated, getAccessToken]);
 
-  // Intervalo para UI fluida
   useEffect(() => {
     if (!isPaused && player) {
       intervalRef.current = setInterval(async () => {
-        const state = await player.getCurrentState();
-        if (state) setPosition(state.position);
+        try {
+            const state = await player.getCurrentState();
+            if (state) setPosition(state.position);
+        } catch { /* ignore */ }
       }, PLAYER_CONFIG.UPDATE_INTERVAL);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -245,7 +250,7 @@ export function PlayerProvider({ children }) {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [isPaused, player]);
 
-  // --- HELPERS EXTRAS ---
+  // --- FUNCIONES PÚBLICAS ---
 
   const previousTrack = async () => {
     if (queueIndex > 0) {
@@ -267,26 +272,19 @@ export function PlayerProvider({ children }) {
     if (queue.length === 0 && tracks.length > 0) playTrack(tracks[0]);
   };
 
-  /**
-   * Optimizar cola con IA (Estimación por Groq)
-   */
+  // Optimización usando IA (Groq) en lugar de Spotify API Features
   const optimizeQueueWithAI = async (flowType = 'maintain') => {
     if (queue.length <= 1) return;
     
     try {
       setIsOptimizing(true);
       
-      // 1. Preparamos la lista de canciones para enviársela a la IA
-      // Solo enviamos nombre y artista, que es lo que la IA necesita para "recordar" la canción
       const tracksToAnalyze = queue.map(t => ({
         id: t.id,
         name: t.name,
         artist: t.artists?.[0]?.name || 'Unknown'
       }));
 
-      console.log('🤖 Pidiendo a la IA que analice musicalmente', tracksToAnalyze.length, 'canciones...');
-
-      // 2. Llamamos a nuestra API de Groq en modo "analyze_tracks"
       const response = await fetch('/api/ai_groq', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -297,11 +295,9 @@ export function PlayerProvider({ children }) {
       });
 
       const { features } = await response.json();
-      console.log('📊 Datos musicales recibidos de la IA:', features);
-
-      // 3. Inyectamos los datos estimados en los tracks
+      
       const tracksWithFeatures = queue.map((track) => {
-        const aiData = features[track.id] || { tempo: 120, energy: 0.5, key: 0 };
+        const aiData = features?.[track.id] || { tempo: 120, energy: 0.5, key: 0 };
         return {
           ...track,
           audioFeatures: {
@@ -309,22 +305,18 @@ export function PlayerProvider({ children }) {
             energy: aiData.energy || 0.5,
             key: aiData.key || 0,
             mode: 1,
-            danceability: aiData.energy || 0.5 // Estimamos danceability con energía
+            danceability: aiData.energy || 0.5
           }
         };
       });
       
-      // 4. Ordenamos usando el algoritmo local (ahora con datos llenos)
       const optimized = optimizeQueue(tracksWithFeatures, flowType);
-      
       setQueue(optimized);
       setIsOptimizing(false);
-      
       return optimized;
     } catch (error) {
-      console.error('Error optimizing queue with AI:', error);
+      console.error('Error optimizing queue:', error);
       setIsOptimizing(false);
-      // No lanzamos error para que la app no se rompa, solo avisamos en consola
     }
   };
 

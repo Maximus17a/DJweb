@@ -1,8 +1,6 @@
 import axios from 'axios';
 import { SPOTIFY_API, STORAGE_KEYS } from '../utils/constants';
 
-// ... (código existente de axios interceptors igual que antes) ...
-
 const spotifyAxios = axios.create({
   baseURL: SPOTIFY_API.BASE_URL,
   headers: { 'Content-Type': 'application/json' },
@@ -95,8 +93,20 @@ export async function searchTracks(query, limit = 20) {
     });
     return response.data.tracks.items;
   } catch (error) {
+    // CORREGIDO: Usamos la variable error
     console.warn('Error searching tracks:', error);
     return [];
+  }
+}
+
+// Nueva función para el análisis profundo de la estructura (Drops, Beats)
+export async function getAudioAnalysis(trackId) {
+  try {
+    const response = await spotifyAxios.get(`/audio-analysis/${trackId}`);
+    return response.data;
+  } catch (error) {
+    console.warn('Error fetching audio analysis:', error);
+    return null;
   }
 }
 
@@ -148,9 +158,12 @@ export async function getPlaybackState() {
   } catch { return null; }
 }
 
-export async function playTrack(trackUri, deviceId = null) {
+export async function playTrack(trackUri, deviceId = null, positionMs = 0) {
   const params = deviceId ? { device_id: deviceId } : {};
-  await spotifyAxios.put(`${SPOTIFY_API.ENDPOINTS.PLAYER}/play`, { uris: [trackUri] }, { params });
+  await spotifyAxios.put(`${SPOTIFY_API.ENDPOINTS.PLAYER}/play`, { 
+    uris: [trackUri],
+    position_ms: positionMs // Permitimos seek inicial
+  }, { params });
 }
 
 export async function pausePlayback(deviceId = null) {
@@ -189,7 +202,6 @@ export async function transferPlayback(deviceId, play = true) {
   await spotifyAxios.put(SPOTIFY_API.ENDPOINTS.PLAYER, { device_ids: [deviceId], play });
 }
 
-// === NUEVA FUNCIÓN PARA AUTOPLAY ===
 export async function getRecommendations(seedTrackId, limit = 5) {
   try {
     const response = await spotifyAxios.get(SPOTIFY_API.ENDPOINTS.RECOMMENDATIONS, {
@@ -200,6 +212,7 @@ export async function getRecommendations(seedTrackId, limit = 5) {
     });
     return response.data.tracks;
   } catch (error) {
+    // CORREGIDO: Usamos la variable error
     console.warn('Error fetching recommendations:', error);
     return [];
   }
