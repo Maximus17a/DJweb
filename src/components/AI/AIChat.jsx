@@ -3,9 +3,18 @@ import { Send, MessageSquare } from 'lucide-react';
 import { usePlayer } from '../../context/PlayerContext';
 
 export default function AIChat() {
-  const { optimizeQueueWithAI, toggleAIMode, clearQueue, nextTrack, previousTrack, isAIMode } = usePlayer();
+  const { 
+    optimizeQueueWithAI, 
+    toggleAIMode, 
+    clearQueue, 
+    nextTrack, 
+    previousTrack, 
+    isAIMode, 
+    performSmartMix 
+  } = usePlayer();
+  
   const [messages, setMessages] = useState([
-    { from: 'ai', text: 'Hola — dime qué quieres que haga. Ej: "optimizar", "activar ia", "limpiar cola", "siguiente"' },
+    { from: 'ai', text: 'Hola — soy tu DJ asistente. Puedo "optimizar" la cola o hacer una "mezcla" profesional.' },
   ]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -34,9 +43,27 @@ export default function AIChat() {
       return;
     }
 
-    if (t.includes('siguiente')) {
-      nextTrack();
-      push('ai', 'Siguiente track');
+    // Comandos de navegación y mezcla
+    if (t.includes('siguiente') || t.includes('next') || t.includes('mezcla') || t.includes('mix')) {
+      // Si el usuario pide explícitamente "mezclar" o "mix"
+      if (t.includes('mezcla') || t.includes('mix')) {
+        setBusy(true);
+        push('ai', 'Analizando BPM y energía para transición profesional...');
+        try {
+          await performSmartMix();
+          push('ai', 'Transición de DJ completada.');
+        } catch (error) {
+          console.error(error);
+          push('ai', 'No se pudo realizar la mezcla inteligente. Saltando normal.');
+          nextTrack();
+        } finally {
+          setBusy(false);
+        }
+      } else {
+        // Solo siguiente normal
+        nextTrack();
+        push('ai', 'Siguiente track');
+      }
       return;
     }
 
@@ -67,7 +94,7 @@ export default function AIChat() {
       return;
     }
 
-    push('ai', 'No entendí el comando. Prueba: optimizar, limpiar, siguiente, activar ia');
+    push('ai', 'No entendí el comando. Prueba: "haz una mezcla", "optimizar", "siguiente", "activar ia"');
   };
 
   const handleSend = async () => {
@@ -78,7 +105,7 @@ export default function AIChat() {
 
     // First try to detect and run direct commands locally
     const lower = text.toLowerCase();
-    const isCommand = /\b(optimizar|limpiar|siguiente|anterior|activar ia|activar ai|desactivar ia|desactivar ai)\b/.test(lower);
+    const isCommand = /\b(optimizar|limpiar|siguiente|anterior|activar ia|activar ai|desactivar ia|desactivar ai|mezcla|mix)\b/.test(lower);
     if (isCommand) {
       await parseAndRun(text);
       return;
@@ -86,7 +113,7 @@ export default function AIChat() {
 
     // If remote is disabled (e.g. exhausted quota), inform user
     if (!remoteEnabled) {
-      push('ai', 'Las llamadas remotas están desactivadas debido a problemas con la API. Puedes usar comandos locales (ej: optimizar, limpiar, siguiente).');
+      push('ai', 'Las llamadas remotas están desactivadas. Puedes usar comandos locales (ej: mezcla, optimizar).');
       return;
     }
 
@@ -103,10 +130,9 @@ export default function AIChat() {
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         console.warn('AI endpoint error', err);
-        // If OpenAI indicates insufficient_quota, disable remote and inform user
         const code = err && (err.code || err.error?.code) ? (err.code || err.error?.code) : null;
         if (code === 'insufficient_quota' || (err.details && String(err.details).toLowerCase().includes('insufficient_quota'))) {
-          push('ai', 'La cuota de OpenAI se ha agotado. He desactivado las llamadas remotas. Añade otra API key o configura facturación.');
+          push('ai', 'Error de cuota. Llamadas remotas desactivadas.');
           setRemoteEnabled(false);
         } else {
           push('ai', 'Error consultando al modelo. Intenta más tarde.');
@@ -116,21 +142,20 @@ export default function AIChat() {
         const reply = data.reply || '';
         push('ai', reply);
 
-        // Simple post-processing: if model suggested an ACTION: line, execute it
+        // Post-processing: if model suggested an ACTION
         const actionMatch = reply.match(/ACTION:\s*(\w+[\w_-]*)/i);
         if (actionMatch) {
           const action = actionMatch[1].toLowerCase();
           if (action.startsWith('optimizar')) {
-            // allow 'optimizar_build_up' or similar
             const parts = action.split('_');
             const flow = parts[1] || 'maintain';
-            try {
-              await optimizeQueueWithAI(flow);
-              push('ai', `Acción ejecutada: optimizar (${flow})`);
-            } catch (err) {
-              console.warn('Error ejecutando acción del modelo', err);
-              push('ai', 'No se pudo ejecutar la acción sugerida.');
-            }
+            await optimizeQueueWithAI(flow);
+            push('ai', `Acción ejecutada: optimizar (${flow})`);
+          } else if (action.includes('mezcla') || action.includes('mix')) {
+             await performSmartMix();
+             push('ai', 'Acción ejecutada: Mezcla inteligente');
+          } else if (action.includes('siguiente')) {
+             nextTrack();
           }
         }
       }

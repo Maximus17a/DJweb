@@ -1,20 +1,7 @@
+import { Buffer } from 'node:buffer';
+
 /*
-  Vercel serverless proxy para Groq API (alternativa gratuita a OpenAI).
-  
-  Groq ofrece:
-  - Plan gratuito generoso (14,400 requests/día)
-  - Velocidad extremadamente rápida (LPU inference)
-  - Compatible con OpenAI SDK
-  - No requiere tarjeta de crédito
-  
-  Para obtener tu API key:
-  1. Ve a https://console.groq.com/
-  2. Crea una cuenta (solo email, sin tarjeta)
-  3. Ve a "API Keys" y crea una nueva key
-  4. Añade GROQ_API_KEY a las variables de entorno en Vercel
-  
-  POST body: { message: string }
-  Response: { reply: string }
+  Vercel serverless proxy para Groq API.
 */
 
 export default async function handler(req, res) {
@@ -23,33 +10,52 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { message } = req.body || {};
-  if (!message) {
-    res.status(400).json({ error: 'Missing message' });
-    return;
-  }
-
+  const { message, mode, trackData } = req.body || {};
   const GROQ_KEY = process.env.GROQ_API_KEY;
+
   if (!GROQ_KEY) {
-    res.status(500).json({ 
-      error: 'Groq API key not configured on server',
-      instructions: 'Obtén tu API key gratis en https://console.groq.com/keys'
-    });
+    res.status(500).json({ error: 'Groq API key not configured' });
     return;
   }
 
   try {
+    let systemPrompt = 'Eres un DJ asistente. Responde en español.';
+    let userContent = message;
+
+    // MODO DJ PROFESIONAL
+    if (mode === 'dj_mix') {
+      systemPrompt = `
+        Eres un DJ Profesional experto en mezcla armónica y control de energía.
+        Vas a recibir datos de la canción ACTUAL y la SIGUIENTE.
+        
+        Tu tarea es decidir cómo hacer la transición perfecta.
+        Devuelve SOLO un objeto JSON con este formato (sin texto adicional):
+        {
+          "transitionType": "smooth" | "cut" | "long_fade",
+          "fadeDuration": número (en milisegundos, entre 2000 y 10000),
+          "rationale": "Breve explicación de por qué elegiste esto (ej: cambio drástico de BPM requiere corte rápido)"
+        }
+      `;
+      
+      userContent = `
+        Canción Actual: ${trackData.current.name} (BPM: ${trackData.current.bpm}, Energy: ${trackData.current.energy})
+        Canción Siguiente: ${trackData.next.name} (BPM: ${trackData.next.bpm}, Energy: ${trackData.next.energy})
+      `;
+    } 
+    // MODO CHAT NORMAL
+    else {
+      systemPrompt = 'Eres un DJ asistente que ayuda a optimizar y mezclar pistas. Si recibes una instrucción clara de acción (ej: optimizar, siguiente), responde con texto y incluye ACTION: [accion].';
+    }
+
     const payload = {
-      model: 'llama-3.3-70b-versatile', // Modelo gratuito y potente
+      model: 'llama-3.3-70b-versatile',
       messages: [
-        { 
-          role: 'system', 
-          content: 'Eres un DJ asistente que ayuda a optimizar y mezclar pistas. Responde en español. Si recibes una instrucción clara de acción (ej: optimizar, siguiente, limpiar), responde con texto y además incluye una línea con la etiqueta ACTION: seguido de la acción sugerida en formato simple.' 
-        },
-        { role: 'user', content: message },
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
       ],
-      max_tokens: 300,
-      temperature: 0.7,
+      max_tokens: mode === 'dj_mix' ? 150 : 300,
+      temperature: 0.5,
+      response_format: mode === 'dj_mix' ? { type: "json_object" } : undefined
     };
 
     const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -62,18 +68,24 @@ export default async function handler(req, res) {
     });
 
     if (!r.ok) {
-      const errText = await r.text();
-      console.warn('Groq API error:', r.status, errText);
-      let parsed = null;
-      try { parsed = JSON.parse(errText); } catch (e) { /* ignore */ }
-      const code = parsed?.error?.code || null;
-      res.status(502).json({ error: 'Groq API error', details: errText, code });
-      return;
+      throw new Error(await r.text());
     }
 
     const data = await r.json();
     const reply = data.choices?.[0]?.message?.content || '';
+    
+    if (mode === 'dj_mix') {
+      try {
+        const mixData = JSON.parse(reply);
+        return res.status(200).json({ mixData });
+      } catch (e) { // Corrección aquí: usamos 'e' o lo quitamos
+        console.error('Error parsing JSON from AI:', e);
+        return res.status(200).json({ mixData: { transitionType: 'smooth', fadeDuration: 5000, rationale: 'Fallback por error de parseo' } });
+      }
+    }
+
     res.status(200).json({ reply });
+
   } catch (err) {
     console.error('AI proxy error', err);
     res.status(500).json({ error: 'Server error' });
