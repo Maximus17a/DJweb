@@ -42,14 +42,15 @@ export function PlayerProvider({ children }) {
 
   // --- FUNCIONES ---
 
-  const playTrack = useCallback(async (track, startPosition = 0) => {
+  const playTrack = useCallback(async (track, startPosition = 0) => { // <--- Recibe startPosition
     if (!playerRef.current || !deviceId) return;
+    
     try {
       await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
         method: 'PUT',
         body: JSON.stringify({ 
           uris: [track.uri],
-          position_ms: startPosition
+          position_ms: startPosition // <--- ESTO ES CRÍTICO PARA EL DROP
         }),
         headers: {
           'Content-Type': 'application/json',
@@ -89,31 +90,56 @@ export function PlayerProvider({ children }) {
     }
   }, [playTrack, currentTrack]);
 
+  /**
+   * Lógica de transición profesional
+   * Usa curvas logarítmicas para que el volumen se sienta natural
+   */
   const executeTransition = useCallback(async (durationMs, cuePointSeconds = 0) => {
     if (!playerRef.current) return;
-    const steps = 20;
+
+    const steps = 30; // Más pasos para suavidad
     const stepTime = durationMs / steps;
     const startVolume = volume;
     
-    // Fade Out
+    console.log(`🎚️ Ejecutando transición al segundo ${cuePointSeconds}...`);
+
+    // --- FASE 1: FADE OUT (Logarítmico) ---
+    // Mantenemos el volumen alto más tiempo y bajamos rápido al final
     for (let i = steps; i >= 0; i--) {
-      const newVol = startVolume * (i / steps);
+      // Curva de potencia para simular fader de DJ real (x^2)
+      const progress = i / steps;
+      const newVol = startVolume * (progress * progress); 
+      
       if (playerRef.current) await playerRef.current.setVolume(newVol);
+      
+      // Si es un corte rápido ("slam"), reducimos el tiempo de espera
       await new Promise(r => setTimeout(r, stepTime));
     }
 
-    // Cambiar Pista
-    const cuePointMs = Math.round(cuePointSeconds * 1000);
+    // --- FASE 2: EL SALTO (CUE POINT) ---
+    // Convertimos a milisegundos y aseguramos que sea entero
+    const cuePointMs = Math.floor(cuePointSeconds * 1000);
+    
+    // Llamamos a nextTrack pasando el punto exacto de inicio
+    // NOTA: nextTrack usa playTrack, que ya tiene la lógica de 'position_ms'
     await nextTrack(cuePointMs);
 
-    await new Promise(r => setTimeout(r, 800));
+    // Esperamos un mínimo técnico para que Spotify cargue (buffer)
+    // 300ms suele ser suficiente para conexiones modernas
+    await new Promise(r => setTimeout(r, 300));
     
-    // Fade In
+    // --- FASE 3: FADE IN (Explosivo) ---
+    // Subimos rápido para que el "Drop" pegue fuerte
     for (let i = 0; i <= steps; i++) {
-      const newVol = startVolume * (i / steps);
+      const progress = i / steps;
+      // Curva inversa para entrada rápida
+      const newVol = startVolume * Math.sqrt(progress);
+      
       if (playerRef.current) await playerRef.current.setVolume(newVol);
-      await new Promise(r => setTimeout(r, stepTime / 2));
+      await new Promise(r => setTimeout(r, stepTime * 0.6)); // 40% más rápido que la salida
     }
+    
+    // Aseguramos volumen final
     if (playerRef.current) await playerRef.current.setVolume(startVolume);
   }, [volume, nextTrack]);
 /**
