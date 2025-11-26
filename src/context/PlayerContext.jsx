@@ -20,7 +20,7 @@ export function PlayerProvider({ children }) {
   const [volume, setVolume] = useState(PLAYER_CONFIG.VOLUME);
   const [queue, setQueue] = useState([]);
   const [queueIndex, setQueueIndex] = useState(0);
-  const [isAIMode, setIsAIMode] = useState(false);
+  const [isAIMode, setIsAIMode] = useState(true); // Activado por defecto para que la IA haga transiciones
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [autoPlay, setAutoPlay] = useState(true);
 
