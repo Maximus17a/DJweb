@@ -41,10 +41,14 @@ export function PlayerProvider({ children }) {
   /**
    * Reproducir un track específico
    */
+  /**
+   * Reproducir un track específico
+   */
   const playTrack = useCallback(async (track) => {
     if (!playerRef.current || !deviceId) return;
     
     try {
+      // CORREGIDO: Eliminado el '$' extra antes de {deviceId}
       await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
         method: 'PUT',
         body: JSON.stringify({ uris: [track.uri] }),
