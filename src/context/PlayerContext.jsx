@@ -2,15 +2,14 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 import { useAuth } from './AuthContext';
 import { PLAYER_CONFIG, AI_CONFIG } from '../utils/constants';
 import { optimizeQueue } from '../utils/bpmMatcher';
-// Eliminamos getMultipleAudioFeatures porque ahora usamos la IA
-import { getRecommendations,  } from '../services/spotifyApi'; 
+import {  getRecommendations  } from '../services/spotifyApi';
 
 const PlayerContext = createContext(null);
 
 export function PlayerProvider({ children }) {
   const { getAccessToken, isAuthenticated } = useAuth();
   
-  // Estado
+  // --- ESTADOS ---
   const [player, setPlayer] = useState(null);
   const [deviceId, setDeviceId] = useState(null);
   const [isPaused, setIsPaused] = useState(true);
@@ -25,24 +24,28 @@ export function PlayerProvider({ children }) {
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [autoPlay, setAutoPlay] = useState(true);
 
-  // Refs
+  // --- REFS (Para acceso instantáneo dentro de listeners) ---
   const playerRef = useRef(null);
   const intervalRef = useRef(null);
+  
+  // Refs críticos para la lógica de automix
   const isAIModeRef = useRef(isAIMode);
-  const isProcessingRef = useRef(false);
-  const handleTrackEndRef = useRef(null);
+  const isProcessingRef = useRef(false); // 🔒 Candado para evitar saltos dobles
   const queueRef = useRef(queue);
   const queueIndexRef = useRef(queueIndex);
   const autoPlayRef = useRef(autoPlay);
+  const currentTrackRef = useRef(currentTrack);
 
+  // Sincronizar Refs con el Estado
   useEffect(() => { isAIModeRef.current = isAIMode; }, [isAIMode]);
   useEffect(() => { queueRef.current = queue; }, [queue]);
   useEffect(() => { queueIndexRef.current = queueIndex; }, [queueIndex]);
   useEffect(() => { autoPlayRef.current = autoPlay; }, [autoPlay]);
+  useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
 
-  // --- FUNCIONES ---
+  // --- FUNCIONES BÁSICAS DE REPRODUCCIÓN ---
 
-  const playTrack = useCallback(async (track, startPosition = 0) => { // <--- Recibe startPosition
+  const playTrack = useCallback(async (track, startPosition = 0) => {
     if (!playerRef.current || !deviceId) return;
     
     try {
@@ -50,16 +53,19 @@ export function PlayerProvider({ children }) {
         method: 'PUT',
         body: JSON.stringify({ 
           uris: [track.uri],
-          position_ms: startPosition // <--- ESTO ES CRÍTICO PARA EL DROP
+          position_ms: startPosition 
         }),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${getAccessToken()}`,
         },
       });
+      
       setCurrentTrack(track);
       setIsPaused(false);
       setIsActive(true);
+      // Reiniciamos el candado al cambiar de canción
+      setTimeout(() => { isProcessingRef.current = false; }, 1000);
     } catch (error) {
       console.warn('Error playing track:', error);
     }
@@ -69,109 +75,106 @@ export function PlayerProvider({ children }) {
     const currentQ = queueRef.current;
     const currentIndex = queueIndexRef.current;
 
+    // 1. Si hay canciones en la cola, seguimos
     if (currentIndex < currentQ.length - 1) {
       const nextIndex = currentIndex + 1;
       setQueueIndex(nextIndex);
       await playTrack(currentQ[nextIndex], startPos);
-    } else if (autoPlayRef.current) {
-      console.log('Autoplay...');
-      const lastTrack = currentQ[currentQ.length - 1] || currentTrack;
+    } 
+    // 2. Si se acabó la cola y Autoplay está activo, buscamos más
+    else if (autoPlayRef.current) {
+      console.log('📻 Fin de la cola. Buscando música similar...');
+      const lastTrack = currentQ[currentQ.length - 1] || currentTrackRef.current;
+      
       if (lastTrack) {
         try {
           const recommendations = await getRecommendations(lastTrack.id);
-          if (recommendations.length > 0) {
+          if (recommendations && recommendations.length > 0) {
             const newQueue = [...currentQ, ...recommendations];
             setQueue(newQueue);
-            setQueueIndex(currentIndex + 1);
+            
+            // Reproducir la primera recomendada
+            const nextIndex = currentIndex + 1;
+            setQueueIndex(nextIndex);
             await playTrack(recommendations[0], startPos);
           }
-        } catch (e) { console.error(e); }
+        } catch (e) {
+          console.error('Error en autoplay:', e);
+        }
       }
     }
-  }, [playTrack, currentTrack]);
+  }, [playTrack]);
 
-  /**
-   * Lógica de transición profesional
-   * Usa curvas logarítmicas para que el volumen se sienta natural
-   */
+  // --- LÓGICA DE TRANSICIÓN DEL DJ ---
+
   const executeTransition = useCallback(async (durationMs, cuePointSeconds = 0) => {
     if (!playerRef.current) return;
 
-    const steps = 30; // Más pasos para suavidad
+    const steps = 20;
     const stepTime = durationMs / steps;
     const startVolume = volume;
     
-    console.log(`🎚️ Ejecutando transición al segundo ${cuePointSeconds}...`);
+    console.log(`🎚️ Mezclando: Fade Out (${durationMs}ms) -> Salto al seg ${cuePointSeconds}`);
 
-    // --- FASE 1: FADE OUT (Logarítmico) ---
-    // Mantenemos el volumen alto más tiempo y bajamos rápido al final
+    // 1. FADE OUT
     for (let i = steps; i >= 0; i--) {
-      // Curva de potencia para simular fader de DJ real (x^2)
-      const progress = i / steps;
-      const newVol = startVolume * (progress * progress); 
-      
+      const newVol = startVolume * (i / steps);
       if (playerRef.current) await playerRef.current.setVolume(newVol);
-      
-      // Si es un corte rápido ("slam"), reducimos el tiempo de espera
       await new Promise(r => setTimeout(r, stepTime));
     }
 
-    // --- FASE 2: EL SALTO (CUE POINT) ---
-    // Convertimos a milisegundos y aseguramos que sea entero
-    const cuePointMs = Math.floor(cuePointSeconds * 1000);
-    
-    // Llamamos a nextTrack pasando el punto exacto de inicio
-    // NOTA: nextTrack usa playTrack, que ya tiene la lógica de 'position_ms'
+    // 2. CAMBIO DE PISTA + SEEK (CUE POINT)
+    const cuePointMs = Math.round(cuePointSeconds * 1000);
     await nextTrack(cuePointMs);
 
-    // Esperamos un mínimo técnico para que Spotify cargue (buffer)
-    // 300ms suele ser suficiente para conexiones modernas
-    await new Promise(r => setTimeout(r, 300));
+    // 3. ESPERA TÉCNICA (BUFFER)
+    await new Promise(r => setTimeout(r, 500));
     
-    // --- FASE 3: FADE IN (Explosivo) ---
-    // Subimos rápido para que el "Drop" pegue fuerte
+    // 4. FADE IN
     for (let i = 0; i <= steps; i++) {
-      const progress = i / steps;
-      // Curva inversa para entrada rápida
-      const newVol = startVolume * Math.sqrt(progress);
-      
+      const newVol = startVolume * (i / steps);
       if (playerRef.current) await playerRef.current.setVolume(newVol);
-      await new Promise(r => setTimeout(r, stepTime * 0.6)); // 40% más rápido que la salida
+      await new Promise(r => setTimeout(r, stepTime / 2));
     }
     
-    // Aseguramos volumen final
+    // Asegurar volumen final
     if (playerRef.current) await playerRef.current.setVolume(startVolume);
   }, [volume, nextTrack]);
-/**
-   * Función DJ Mode (100% IA - Sin errores 403)
+
+  /**
+   * CEREBRO DEL DJ (Smart Mix)
    */
   const performSmartMix = useCallback(async () => {
     const currentQ = queueRef.current;
     const currentIndex = queueIndexRef.current;
-    
+
+    // Verificar si hay siguiente canción
+    if (currentIndex >= currentQ.length - 1 && !autoPlayRef.current) return;
+
+    // Si es autoplay y no hay tracks, nextTrack lo resuelve, pero necesitamos datos para la IA.
+    // Para simplificar: Si estamos al final de la cola, hacemos transición normal para cargar más música rápido.
     if (currentIndex >= currentQ.length - 1) {
         await nextTrack();
-        return "Autoplay activado";
+        return "Autoplay (Carga rápida)";
     }
 
     const nextTrackItem = currentQ[currentIndex + 1];
-    
-    // Construimos el objeto con SOLO los datos básicos (Nombre y Artista)
-    // La IA se encargará de "recordar" el resto.
-    const trackData = {
-      current: {
-        name: currentTrack?.name || 'Unknown',
-        artist: currentTrack?.artists?.[0]?.name || 'Unknown',
-      },
-      next: {
-        name: nextTrackItem.name,
-        artist: nextTrackItem.artists?.[0]?.name || 'Unknown',
-      }
-    };
 
     try {
-      console.log('🎧 DJ AI analizando estructura y letra (Modo Conocimiento)...');
+      console.log('🤖 DJ IA analizando próxima mezcla...');
       
+      // Construimos los datos para la IA
+      const trackData = {
+        current: {
+          name: currentTrackRef.current?.name || 'Unknown',
+          artist: currentTrackRef.current?.artists?.[0]?.name || 'Unknown',
+        },
+        next: {
+          name: nextTrackItem.name,
+          artist: nextTrackItem.artists?.[0]?.name || 'Unknown',
+        }
+      };
+
       const response = await fetch('/api/ai_groq', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -179,41 +182,48 @@ export function PlayerProvider({ children }) {
       });
       
       const { mixData } = await response.json();
-      console.log('🎚️ Plan de Mezcla:', mixData);
+      console.log('✨ Estrategia recibida:', mixData);
       
-      // Ejecutar la transición con los datos inventados/estimados por la IA
       await executeTransition(
-        mixData?.fadeDuration || 5000,
+        mixData?.fadeDuration || 4000,
         mixData?.cuePoint || 0
       );
-      
+
       return mixData?.rationale;
 
     } catch (error) {
-      console.error('Error en smart mix:', error);
-      // Si falla la IA, hacemos transición normal
-      await nextTrack();
+      console.error('Error en Smart Mix:', error);
+      await nextTrack(); // Fallback seguro
     }
-  }, [currentTrack, executeTransition, nextTrack]);
+  }, [executeTransition, nextTrack]);
 
-  // --- MANEJADOR DE EVENTOS ---
+  // --- CONTROLADOR AUTOMÁTICO (EL BUCLE PRINCIPAL) ---
 
+  // Esta función decide qué hacer cuando la canción está acabando
   const handleTrackEnd = useCallback(async () => {
+    // 🔒 SI EL CANDADO ESTÁ PUESTO, NO HACEMOS NADA
     if (isProcessingRef.current) return;
+    
+    // 🔒 PONEMOS EL CANDADO
     isProcessingRef.current = true;
 
+    console.log('⚠️ Fin de pista detectado. Iniciando transición...');
+
     if (isAIModeRef.current) {
+      // Si el modo DJ está activo, usamos la IA
       await performSmartMix();
     } else {
+      // Si no, salto normal
       await nextTrack();
     }
+    
+    // El candado se libera dentro de playTrack, pero por seguridad lo forzamos aquí también después de un tiempo
+    setTimeout(() => { isProcessingRef.current = false; }, 5000);
 
-    setTimeout(() => { isProcessingRef.current = false; }, 3000);
-  }, [nextTrack, performSmartMix]);
+  }, [performSmartMix, nextTrack]);
 
-  useEffect(() => { handleTrackEndRef.current = handleTrackEnd; }, [handleTrackEnd]);
 
-  // --- INICIALIZACIÓN ---
+  // --- INICIALIZACIÓN DEL REPRODUCTOR Y EVENTOS ---
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -231,27 +241,38 @@ export function PlayerProvider({ children }) {
         volume: PLAYER_CONFIG.VOLUME,
       });
 
+      // Eventos de conexión
       spotifyPlayer.addListener('ready', ({ device_id }) => {
-        console.log('Ready:', device_id);
+        console.log('Ready with Device ID', device_id);
         setDeviceId(device_id);
       });
 
       spotifyPlayer.addListener('not_ready', ({ device_id }) => {
-        console.log('Offline:', device_id);
+        console.log('Device ID has gone offline', device_id);
       });
 
+      // EVENTO PRINCIPAL: CAMBIO DE ESTADO
       spotifyPlayer.addListener('player_state_changed', (state) => {
         if (!state) return;
+
+        // Actualizar estado local
         setCurrentTrack(state.track_window.current_track);
         setIsPaused(state.paused);
         setPosition(state.position);
         setDuration(state.duration);
 
-        if (!state.paused && state.position > 0 && state.duration > 0) {
-          const remaining = state.duration - state.position;
-          if (remaining < 1500 && !isProcessingRef.current) {
-             if (handleTrackEndRef.current) handleTrackEndRef.current();
-          }
+        // --- DETECTOR DE FIN DE CANCIÓN ---
+        // Si la canción se está reproduciendo y faltan menos de 2 segundos...
+        if (!state.paused && 
+            state.position > 0 && 
+            state.duration > 0 && 
+            (state.duration - state.position) < 2000) {
+            
+            // ... y NO estamos procesando ya un cambio...
+            if (!isProcessingRef.current) {
+               // ... ¡ACTIVAMOS EL DJ!
+               handleTrackEnd();
+            }
         }
       });
 
@@ -259,25 +280,24 @@ export function PlayerProvider({ children }) {
       setPlayer(spotifyPlayer);
       playerRef.current = spotifyPlayer;
     };
+  }, [isAuthenticated, getAccessToken, handleTrackEnd]); // Añadimos handleTrackEnd a deps
 
-    return () => { if (playerRef.current) playerRef.current.disconnect(); };
-  }, [isAuthenticated, getAccessToken]);
-
+  // Intervalo para UI fluida (barra de progreso)
   useEffect(() => {
     if (!isPaused && player) {
       intervalRef.current = setInterval(async () => {
         try {
             const state = await player.getCurrentState();
             if (state) setPosition(state.position);
-        } catch { /* ignore */ }
+        } catch { /* ignorar errores de estado */ }
       }, PLAYER_CONFIG.UPDATE_INTERVAL);
     } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      clearInterval(intervalRef.current);
     }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    return () => clearInterval(intervalRef.current);
   }, [isPaused, player]);
 
-  // --- FUNCIONES PÚBLICAS ---
+  // --- OTRAS FUNCIONES EXPORTADAS ---
 
   const previousTrack = async () => {
     if (queueIndex > 0) {
@@ -299,13 +319,11 @@ export function PlayerProvider({ children }) {
     if (queue.length === 0 && tracks.length > 0) playTrack(tracks[0]);
   };
 
-  // Optimización usando IA (Groq) en lugar de Spotify API Features
   const optimizeQueueWithAI = async (flowType = 'maintain') => {
     if (queue.length <= 1) return;
-    
     try {
       setIsOptimizing(true);
-      
+      // Usamos la IA para analizar la lista
       const tracksToAnalyze = queue.map(t => ({
         id: t.id,
         name: t.name,
@@ -315,10 +333,7 @@ export function PlayerProvider({ children }) {
       const response = await fetch('/api/ai_groq', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          mode: 'analyze_tracks', 
-          tracks: tracksToAnalyze 
-        })
+        body: JSON.stringify({ mode: 'analyze_tracks', tracks: tracksToAnalyze })
       });
 
       const { features } = await response.json();
@@ -342,7 +357,7 @@ export function PlayerProvider({ children }) {
       setIsOptimizing(false);
       return optimized;
     } catch (error) {
-      console.error('Error optimizing queue:', error);
+      console.error('Error optimizing:', error);
       setIsOptimizing(false);
     }
   };
