@@ -2,14 +2,14 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 import { useAuth } from './AuthContext';
 import { PLAYER_CONFIG, AI_CONFIG } from '../utils/constants';
 import { optimizeQueue } from '../utils/bpmMatcher';
-import { getMultipleAudioFeatures } from '../services/spotifyApi';
+import { getMultipleAudioFeatures, getRecommendations } from '../services/spotifyApi'; // Importamos recomendaciones
 
 const PlayerContext = createContext(null);
 
 export function PlayerProvider({ children }) {
   const { getAccessToken, isAuthenticated } = useAuth();
   
-  // Estado del reproductor
+  // Estado
   const [player, setPlayer] = useState(null);
   const [deviceId, setDeviceId] = useState(null);
   const [isPaused, setIsPaused] = useState(true);
@@ -18,34 +18,33 @@ export function PlayerProvider({ children }) {
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(PLAYER_CONFIG.VOLUME);
-  
-  // Estado de la cola
   const [queue, setQueue] = useState([]);
   const [queueIndex, setQueueIndex] = useState(0);
   const [isAIMode, setIsAIMode] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  
-  // Referencias
+  const [autoPlay, setAutoPlay] = useState(true); // Autoplay activado por defecto
+
+  // Refs
   const playerRef = useRef(null);
   const intervalRef = useRef(null);
-  
-  // Refs para evitar Stale Closures en event listeners
   const isAIModeRef = useRef(isAIMode);
-  const handleAutoMixRef = useRef(null);
+  const isProcessingRef = useRef(false); // Candado para evitar saltos dobles
+  const handleTrackEndRef = useRef(null);
+  const queueRef = useRef(queue);
+  const queueIndexRef = useRef(queueIndex);
+  const autoPlayRef = useRef(autoPlay);
 
   // Sincronizar Refs
-  useEffect(() => {
-    isAIModeRef.current = isAIMode;
-  }, [isAIMode]);
+  useEffect(() => { isAIModeRef.current = isAIMode; }, [isAIMode]);
+  useEffect(() => { queueRef.current = queue; }, [queue]);
+  useEffect(() => { queueIndexRef.current = queueIndex; }, [queueIndex]);
+  useEffect(() => { autoPlayRef.current = autoPlay; }, [autoPlay]);
 
-  /**
-   * Reproducir un track específico
-   */
+  // --- FUNCIONES DE REPRODUCCIÓN ---
+
   const playTrack = useCallback(async (track) => {
     if (!playerRef.current || !deviceId) return;
-    
     try {
-      // CORREGIDO: URL limpia sin el signo de dólar extra
       await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
         method: 'PUT',
         body: JSON.stringify({ uris: [track.uri] }),
@@ -54,7 +53,6 @@ export function PlayerProvider({ children }) {
           Authorization: `Bearer ${getAccessToken()}`,
         },
       });
-      
       setCurrentTrack(track);
       setIsPaused(false);
       setIsActive(true);
@@ -63,24 +61,38 @@ export function PlayerProvider({ children }) {
     }
   }, [deviceId, getAccessToken]);
 
-  /**
-   * Siguiente track
-   */
   const nextTrack = useCallback(async () => {
-    if (queueIndex < queue.length - 1) {
-      const nextIndex = queueIndex + 1;
-      setQueueIndex(nextIndex);
-      await playTrack(queue[nextIndex]);
-    }
-  }, [queue, queueIndex, playTrack]);
+    const currentQ = queueRef.current;
+    const currentIndex = queueIndexRef.current;
 
-  /**
-   * Lógica de desvanecimiento manual (Crossfade simulado)
-   * Definida ANTES de ser usada en performSmartMix
-   */
+    if (currentIndex < currentQ.length - 1) {
+      const nextIndex = currentIndex + 1;
+      setQueueIndex(nextIndex);
+      await playTrack(currentQ[nextIndex]);
+    } else if (autoPlayRef.current) {
+      // Autoplay: Si no hay más canciones, buscar similares
+      console.log('Cola terminada. Buscando recomendaciones...');
+      const lastTrack = currentQ[currentQ.length - 1] || currentTrack;
+      if (lastTrack) {
+        try {
+          const recommendations = await getRecommendations(lastTrack.id);
+          if (recommendations.length > 0) {
+            const newQueue = [...currentQ, ...recommendations];
+            setQueue(newQueue);
+            setQueueIndex(currentIndex + 1); // Avanzar al primero de los nuevos
+            await playTrack(recommendations[0]);
+          }
+        } catch (e) {
+          console.error('Error en autoplay:', e);
+        }
+      }
+    }
+  }, [playTrack, currentTrack]); // Dependencias simplificadas gracias a los Refs
+
+  // --- LÓGICA DE TRANSICIÓN Y AI ---
+
   const executeTransition = useCallback(async (durationMs) => {
     if (!playerRef.current) return;
-
     const steps = 20;
     const stepTime = durationMs / steps;
     const startVolume = volume;
@@ -92,10 +104,9 @@ export function PlayerProvider({ children }) {
       await new Promise(r => setTimeout(r, stepTime));
     }
 
-    // Cambiar Pista
     await nextTrack();
 
-    // Esperar un poco a que cargue el buffer
+    // Buffer wait
     await new Promise(r => setTimeout(r, 800));
     
     // Fade In
@@ -104,75 +115,72 @@ export function PlayerProvider({ children }) {
       if (playerRef.current) await playerRef.current.setVolume(newVol);
       await new Promise(r => setTimeout(r, stepTime / 2));
     }
-    
-    // Restaurar volumen original
     if (playerRef.current) await playerRef.current.setVolume(startVolume);
-  }, [volume, nextTrack]); 
+  }, [volume, nextTrack]);
 
-  /**
-   * Función DJ Mode (Mezcla Inteligente)
-   */
   const performSmartMix = useCallback(async () => {
-    if (!currentTrack || queue.length <= queueIndex + 1) return;
+    const currentQ = queueRef.current;
+    const currentIndex = queueIndexRef.current;
+    
+    // Si no hay siguiente canción, usamos nextTrack que manejará el Autoplay
+    if (currentIndex >= currentQ.length - 1) {
+        await nextTrack();
+        return;
+    }
 
-    const nextTrackData = queue[queueIndex + 1];
+    const nextTrackItem = currentQ[currentIndex + 1];
     const trackData = {
       current: {
-        name: currentTrack.name,
-        bpm: currentTrack.audioFeatures?.tempo || 120,
-        energy: currentTrack.audioFeatures?.energy || 0.5
+        name: currentTrack?.name || 'Unknown',
+        bpm: currentTrack?.audioFeatures?.tempo || 120,
+        energy: currentTrack?.audioFeatures?.energy || 0.5
       },
       next: {
-        name: nextTrackData.name,
-        bpm: nextTrackData.audioFeatures?.tempo || 120,
-        energy: nextTrackData.audioFeatures?.energy || 0.5
+        name: nextTrackItem.name,
+        bpm: nextTrackItem.audioFeatures?.tempo || 120,
+        energy: nextTrackItem.audioFeatures?.energy || 0.5
       }
     };
 
     try {
-      console.log('🎧 Consultando al DJ AI...');
+      console.log('🎧 DJ AI Analizando...');
       const response = await fetch('/api/ai_groq', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: 'dj_mix', trackData })
       });
-      
       const { mixData } = await response.json();
-      console.log('🎚️ Estrategia:', mixData);
-      
+      console.log('🎚️ Mezcla:', mixData);
       await executeTransition(mixData?.fadeDuration || 5000);
-
     } catch (error) {
-      console.error('Error smart mix:', error);
+      console.error('Error mix:', error);
       await nextTrack();
     }
-  }, [currentTrack, queue, queueIndex, executeTransition, nextTrack]);
+  }, [currentTrack, executeTransition, nextTrack]);
 
-  /**
-   * Manejar AI Auto-Mix
-   */
-  const handleAutoMix = useCallback(async () => {
-    if (!currentTrack || queue.length <= queueIndex + 1) return;
-    
-    const nextTrackItem = queue[queueIndex + 1];
-    
-    setTimeout(() => {
-      playTrack(nextTrackItem);
-      setQueueIndex((prev) => prev + 1);
-    }, AI_CONFIG.CROSSFADE_DURATION || 5000);
-  }, [currentTrack, queue, queueIndex, playTrack]);
+  // --- MANEJADOR DE FIN DE PISTA ---
 
-  // Actualizar la referencia de handleAutoMix
-  useEffect(() => {
-    handleAutoMixRef.current = handleAutoMix;
-  }, [handleAutoMix]);
+  const handleTrackEnd = useCallback(async () => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
 
-  /**
-   * Inicializar Spotify Web Playback SDK
-   */
+    console.log('Track finalizado. Avanzando...');
+    if (isAIModeRef.current) {
+      await performSmartMix();
+    } else {
+      await nextTrack();
+    }
+
+    // Liberar el candado después de un tiempo seguro
+    setTimeout(() => { isProcessingRef.current = false; }, 3000);
+  }, [nextTrack, performSmartMix]);
+
+  useEffect(() => { handleTrackEndRef.current = handleTrackEnd; }, [handleTrackEnd]);
+
+  // --- SETUP DEL PLAYER ---
+
   useEffect(() => {
     if (!isAuthenticated) return;
-
     const script = document.createElement('script');
     script.src = 'https://sdk.scdn.co/spotify-player.js';
     script.async = true;
@@ -182,36 +190,36 @@ export function PlayerProvider({ children }) {
       const token = getAccessToken();
       const spotifyPlayer = new window.Spotify.Player({
         name: PLAYER_CONFIG.NAME,
-        getOAuthToken: (cb) => {
-          cb(token);
-        },
+        getOAuthToken: (cb) => { cb(token); },
         volume: PLAYER_CONFIG.VOLUME,
       });
 
       spotifyPlayer.addListener('ready', ({ device_id }) => {
-        console.log('Ready with Device ID', device_id);
+        console.log('Ready:', device_id);
         setDeviceId(device_id);
       });
 
       spotifyPlayer.addListener('not_ready', ({ device_id }) => {
-        console.log('Device ID has gone offline', device_id);
+        console.log('Offline:', device_id);
       });
 
       spotifyPlayer.addListener('player_state_changed', (state) => {
         if (!state) return;
-
         setCurrentTrack(state.track_window.current_track);
         setIsPaused(state.paused);
         setPosition(state.position);
         setDuration(state.duration);
-        
-        // Usar Refs para acceder al estado más reciente dentro del callback
-        if (isAIModeRef.current && !state.paused) {
-          const timeRemaining = state.duration - state.position;
-          if (timeRemaining <= AI_CONFIG.CROSSFADE_DURATION && timeRemaining > 0) {
-            if (handleAutoMixRef.current) {
-              handleAutoMixRef.current();
-            }
+
+        // Detección de fin de canción
+        // Si no está pausado y queda menos de 1.5s, activamos el cambio
+        if (!state.paused && state.position > 0 && state.duration > 0) {
+          const remaining = state.duration - state.position;
+          if (remaining < 1500 && !isProcessingRef.current) {
+             if (handleTrackEndRef.current) handleTrackEndRef.current();
+          }
+          // Resetear candado si el usuario retrocedió
+          if (remaining > 5000) {
+             isProcessingRef.current = false;
           }
         }
       });
@@ -221,33 +229,24 @@ export function PlayerProvider({ children }) {
       playerRef.current = spotifyPlayer;
     };
 
-    return () => {
-      if (playerRef.current) {
-        playerRef.current.disconnect();
-      }
-    };
+    return () => { if (playerRef.current) playerRef.current.disconnect(); };
   }, [isAuthenticated, getAccessToken]);
 
-  /**
-   * Actualizar posición
-   */
+  // Intervalo para UI fluida
   useEffect(() => {
     if (!isPaused && player) {
       intervalRef.current = setInterval(async () => {
         const state = await player.getCurrentState();
-        if (state) {
-          setPosition(state.position);
-        }
+        if (state) setPosition(state.position);
       }, PLAYER_CONFIG.UPDATE_INTERVAL);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [isPaused, player]);
 
-  // Otras funciones
+  // --- HELPERS EXTRAS ---
+
   const previousTrack = async () => {
     if (queueIndex > 0) {
       const prevIndex = queueIndex - 1;
@@ -273,61 +272,38 @@ export function PlayerProvider({ children }) {
     try {
       setIsOptimizing(true);
       const trackIds = queue.map(track => track.id);
-      let features = [];
-      try {
-        features = await getMultipleAudioFeatures(trackIds);
-      } catch (err) {
-        console.warn('Could not fetch features', err);
-        features = new Array(trackIds.length).fill(null);
-      }
-      
+      let features = await getMultipleAudioFeatures(trackIds) || [];
       const tracksWithFeatures = queue.map((track, index) => ({
         ...track,
         audioFeatures: features[index] || { tempo: 0, energy: 0, key: 0, mode: 1, danceability: 0 },
       }));
-      
       const optimized = optimizeQueue(tracksWithFeatures, flowType);
       setQueue(optimized);
       setIsOptimizing(false);
       return optimized;
     } catch (error) {
-      console.warn('Error optimizing:', error);
       setIsOptimizing(false);
       throw error;
     }
   };
 
-  const togglePlay = async () => {
-    if (!player) return;
-    await player.togglePlay();
-  };
-
-  const changeVolume = async (newVolume) => {
-    if (!player) return;
-    await player.setVolume(newVolume);
-    setVolume(newVolume);
-  };
-
-  const seek = async (positionMs) => {
-    if (!player) return;
-    await player.seek(positionMs);
-    setPosition(positionMs);
-  };
-
+  const togglePlay = async () => { if (player) await player.togglePlay(); };
+  const changeVolume = async (v) => { if (player) { await player.setVolume(v); setVolume(v); } };
+  const seek = async (p) => { if (player) { await player.seek(p); setPosition(p); } };
   const toggleAIMode = () => setIsAIMode(!isAIMode);
   const clearQueue = () => { setQueue([]); setQueueIndex(0); };
-  const removeFromQueue = (index) => {
-    const newQueue = queue.filter((_, i) => i !== index);
-    setQueue(newQueue);
-    if (index < queueIndex) setQueueIndex(queueIndex - 1);
+  const removeFromQueue = (i) => {
+    const newQ = queue.filter((_, idx) => idx !== i);
+    setQueue(newQ);
+    if (i < queueIndex) setQueueIndex(queueIndex - 1);
   };
 
   const value = {
     player, deviceId, isPaused, isActive, currentTrack, position, duration, volume,
-    queue, queueIndex, isAIMode, isOptimizing,
+    queue, queueIndex, isAIMode, isOptimizing, autoPlay,
     addToQueue, addMultipleToQueue, optimizeQueueWithAI, playTrack, togglePlay,
     nextTrack, previousTrack, changeVolume, seek, toggleAIMode, clearQueue, removeFromQueue,
-    performSmartMix,
+    performSmartMix, setAutoPlay
   };
 
   return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
@@ -336,8 +312,6 @@ export function PlayerProvider({ children }) {
 // eslint-disable-next-line react-refresh/only-export-components
 export function usePlayer() {
   const context = useContext(PlayerContext);
-  if (!context) {
-    throw new Error('usePlayer must be used within a PlayerProvider');
-  }
+  if (!context) throw new Error('usePlayer must be used within a PlayerProvider');
   return context;
 }
