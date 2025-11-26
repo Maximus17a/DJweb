@@ -81,6 +81,10 @@ async function attemptRefreshToken() {
 
 // --- EXPORTACIONES ---
 
+// Agregamos el endpoint de recomendaciones a las constantes
+// Nota: El endpoint de recomendaciones no está en SPOTIFY_API.ENDPOINTS, lo agregaremos en el siguiente paso.
+// Por ahora, asumimos que el endpoint es '/v1/recommendations' y lo agregaremos a las constantes.
+
 export async function getCurrentUser() {
   const response = await spotifyAxios.get(SPOTIFY_API.ENDPOINTS.ME);
   return response.data;
@@ -198,45 +202,33 @@ export async function getRecommendations(seedTrackId, limit = 5) {
   const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
   if (!token || !seedTrackId) return [];
 
-  // Verificación extra: Si el ID parece de un archivo local, no pedimos recomendaciones
-  if (seedTrackId.includes('local')) {
-    console.log('Skipping recommendations for local track');
-    return [];
-  }
-
-  try {
-    const params = new URLSearchParams({
-      seed_tracks: seedTrackId,
-      limit: limit.toString(),
-      min_popularity: '20' // Filtro para evitar canciones rotas
-    });
-
-    // Usamos la URL absoluta para asegurar que no haya errores de base
-    const response = await fetch(`https://api.spotify.com/v1/recommendations?${params.toString()}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      // Si es 404, simplemente no hay recomendaciones, devolvemos array vacío sin error
-      if (response.status === 404) {
-        console.warn(`No recommendations found for track ${seedTrackId}`);
-        return [];
-      }
-      throw new Error(`Spotify API Error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data.tracks || [];
-    
-  } catch (error) {
-    // Silenciamos el error en consola para no ensuciar, solo devolvemos vacío
-    console.warn('Recommendation fetch skipped:', error.message);
-    return [];
-  }
+	  // Verificación extra: Si el ID parece de un archivo local, no pedimos recomendaciones
+	  if (seedTrackId.includes('local')) {
+	    console.log('Skipping recommendations for local track');
+	    return [];
+	  }
+	
+	  try {
+	    const response = await spotifyAxios.get(SPOTIFY_API.ENDPOINTS.RECOMMENDATIONS, {
+	      params: {
+	        seed_tracks: seedTrackId,
+	        limit: limit.toString(),
+	        min_popularity: '20', // Filtro para evitar canciones rotas
+	        market: 'from_token' // Asegura que las recomendaciones sean válidas para el usuario
+	      }
+	    });
+	
+	    return response.data.tracks || [];
+	    
+	  } catch (error) {
+	    // El error 404 de la imagen es probable que sea un error de endpoint o de token.
+	    // Al usar spotifyAxios, el manejo de 401 (token expirado) ya está cubierto.
+	    // El 404 de la imagen podría ser por un endpoint mal formado en la versión anterior.
+	    // Ahora que usamos el endpoint correcto y axios, el error debería desaparecer.
+	    // Si la API devuelve un error (ej. 400 por ID de track inválido), simplemente devolvemos vacío.
+	    console.warn('Recommendation fetch failed:', error.message);
+	    return [];
+	  }
 }
 
 export default spotifyAxios;

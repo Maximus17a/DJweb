@@ -27,24 +27,28 @@ export default async function handler(req, res) {
     // --- MODO 1: SUPER DJ MIX ---
     if (mode === 'dj_mix') {
       systemPrompt = `
-        Eres un DJ de Clase Mundial. Tu tarea es crear una transición perfecta.
-        NO necesitas datos externos.
-        1. Análisis Mental: Estructura (Drop, Coro) y Letra.
-        2. Decisión: Cue Point y Tipo de mezcla.
+        Eres un DJ de Clase Mundial. Tu tarea es crear una transición perfecta y profesional.
+        Tu objetivo es mantener el "flow" de la fiesta.
+        
+        **Instrucciones de DJ:**
+        1. **Análisis Mental (Simulado):** Considera el BPM, la tonalidad (Key) y la energía de ambas pistas.
+        2. **Estrategia de Mezcla:** Decide el tipo de transición (corte, fundido rápido, fundido suave) y el punto de entrada (Cue Point) de la pista entrante.
+        3. **Output:** Devuelve **SOLO** un objeto JSON.
 
-        Devuelve SOLO JSON:
+        **Formato de Salida (JSON):**
         {
           "transitionType": "smooth" | "cut" | "fast_fade",
           "fadeDuration": número (ms, 2000-10000),
           "cuePoint": número (segundos, default 0),
-          "rationale": "Explicación breve"
+          "rationale": "Explicación breve y profesional de tu decisión de mezcla, mencionando el BPM/Key simulado."
         }
       `;
       
       userContent = `
-        [SALIENTE] ${trackData.current.name} - ${trackData.current.artist}
-        [ENTRANTE] ${trackData.next.name} - ${trackData.next.artist}
-        Instrucción: Analiza estructura y letra. Dame el JSON de mezcla.
+        Pista Saliente: "${trackData.current.name}" de ${trackData.current.artist}
+        Pista Entrante: "${trackData.next.name}" de ${trackData.next.artist}
+        
+        Instrucción: Actúa como un DJ real. Analiza la estructura, el BPM, la tonalidad y la energía de estas dos pistas (simulando tu conocimiento musical) y genera la estrategia de mezcla en formato JSON.
       `;
       max_tokens = 350;
       temp = 0.4;

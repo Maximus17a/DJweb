@@ -125,6 +125,8 @@ export function PlayerProvider({ children }) {
 
     // 2. CAMBIO DE PISTA + SEEK (CUE POINT)
     const cuePointMs = Math.round(cuePointSeconds * 1000);
+    // Aseguramos que el player se detenga antes de cambiar de pista para evitar doble reproducción
+    if (playerRef.current) await playerRef.current.pause(); 
     await nextTrack(cuePointMs);
 
     // 3. ESPERA TÉCNICA (BUFFER)
@@ -264,14 +266,15 @@ export function PlayerProvider({ children }) {
         setPosition(state.position);
         setDuration(state.duration);
 
-        if (!state.paused && 
-            state.position > 0 && 
-            state.duration > 0 && 
-            (state.duration - state.position) < 2000) {
-            
-            if (!isProcessingRef.current) {
-               handleTrackEnd();
-            }
+        // Lógica de transición: Si la canción está a punto de terminar (menos de 2 segundos)
+        // O si la canción ha terminado (position es 0 y paused es true después de la reproducción)
+        // Nota: El SDK de Spotify a veces no emite un estado final claro,
+        // por lo que la lógica de tiempo restante es más fiable.
+        const isNearEnd = state.duration > 0 && (state.duration - state.position) < 2000;
+        const isTrackFinished = state.paused && state.position === 0 && state.duration > 0;
+
+        if ((isNearEnd || isTrackFinished) && !isProcessingRef.current) {
+           handleTrackEnd();
         }
       });
 

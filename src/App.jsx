@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { PlayerProvider } from './context/PlayerContext';
 import LoginButton from './components/Auth/LoginButton';
+import LandingPage from './pages/LandingPage';
 import Callback from './pages/Callback';
 import Dashboard from './pages/Dashboard';
 import { Loader2 } from 'lucide-react';
@@ -17,7 +18,7 @@ function ProtectedRoute({ children }) {
     );
   }
 
-  return isAuthenticated ? children : <Navigate to="/login" />;
+  return isAuthenticated ? children : <Navigate to="/" />;
 }
 
 function AppRoutes() {
@@ -34,12 +35,16 @@ function AppRoutes() {
   return (
     <Routes>
       <Route
+        path="/"
+        element={isAuthenticated ? <Navigate to="/dashboard" /> : <LandingPage />}
+      />
+      <Route
         path="/login"
-        element={isAuthenticated ? <Navigate to="/" /> : <LoginButton />}
+        element={isAuthenticated ? <Navigate to="/dashboard" /> : <LoginButton />}
       />
       <Route path="/callback" element={<Callback />} />
       <Route
-        path="/"
+        path="/dashboard"
         element={
           <ProtectedRoute>
             <Dashboard />
