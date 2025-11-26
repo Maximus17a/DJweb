@@ -41,14 +41,11 @@ export function PlayerProvider({ children }) {
   /**
    * Reproducir un track específico
    */
-  /**
-   * Reproducir un track específico
-   */
   const playTrack = useCallback(async (track) => {
     if (!playerRef.current || !deviceId) return;
     
     try {
-      // CORREGIDO: Eliminado el '$' extra antes de {deviceId}
+      // CORREGIDO: URL limpia sin el signo de dólar extra
       await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
         method: 'PUT',
         body: JSON.stringify({ uris: [track.uri] }),
@@ -79,7 +76,7 @@ export function PlayerProvider({ children }) {
 
   /**
    * Lógica de desvanecimiento manual (Crossfade simulado)
-   * Envuelto en useCallback para ser dependencia estable
+   * Definida ANTES de ser usada en performSmartMix
    */
   const executeTransition = useCallback(async (durationMs) => {
     if (!playerRef.current) return;
@@ -91,7 +88,6 @@ export function PlayerProvider({ children }) {
     // Fade Out
     for (let i = steps; i >= 0; i--) {
       const newVol = startVolume * (i / steps);
-      // Usamos playerRef para asegurar acceso a la instancia actual
       if (playerRef.current) await playerRef.current.setVolume(newVol);
       await new Promise(r => setTimeout(r, stepTime));
     }
@@ -111,11 +107,10 @@ export function PlayerProvider({ children }) {
     
     // Restaurar volumen original
     if (playerRef.current) await playerRef.current.setVolume(startVolume);
-  }, [volume, nextTrack]); // Dependencias: volume y nextTrack
+  }, [volume, nextTrack]); 
 
   /**
    * Función DJ Mode (Mezcla Inteligente)
-   * Envuelto en useCallback con todas las dependencias
    */
   const performSmartMix = useCallback(async () => {
     if (!currentTrack || queue.length <= queueIndex + 1) return;
@@ -145,14 +140,13 @@ export function PlayerProvider({ children }) {
       const { mixData } = await response.json();
       console.log('🎚️ Estrategia:', mixData);
       
-      // Ahora executeTransition es una dependencia válida
       await executeTransition(mixData?.fadeDuration || 5000);
 
     } catch (error) {
       console.error('Error smart mix:', error);
       await nextTrack();
     }
-  }, [currentTrack, queue, queueIndex, nextTrack, executeTransition]); 
+  }, [currentTrack, queue, queueIndex, executeTransition, nextTrack]);
 
   /**
    * Manejar AI Auto-Mix
@@ -253,7 +247,7 @@ export function PlayerProvider({ children }) {
     };
   }, [isPaused, player]);
 
-  // Otras funciones que no requieren useCallback complejo
+  // Otras funciones
   const previousTrack = async () => {
     if (queueIndex > 0) {
       const prevIndex = queueIndex - 1;

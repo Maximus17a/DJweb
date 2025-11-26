@@ -42,9 +42,8 @@ export default async function handler(req, res) {
         Canción Siguiente: ${trackData.next.name} (BPM: ${trackData.next.bpm}, Energy: ${trackData.next.energy})
       `;
     } 
-    // MODO CHAT NORMAL
     else {
-      systemPrompt = 'Eres un DJ asistente que ayuda a optimizar y mezclar pistas. Si recibes una instrucción clara de acción (ej: optimizar, siguiente), responde con texto y incluye ACTION: [accion].';
+      systemPrompt = 'Eres un DJ asistente. Si recibes una instrucción clara, responde con texto y ACTION: [accion].';
     }
 
     const payload = {
@@ -78,9 +77,9 @@ export default async function handler(req, res) {
       try {
         const mixData = JSON.parse(reply);
         return res.status(200).json({ mixData });
-      } catch (e) { // Corrección aquí: usamos 'e' o lo quitamos
-        console.error('Error parsing JSON from AI:', e);
-        return res.status(200).json({ mixData: { transitionType: 'smooth', fadeDuration: 5000, rationale: 'Fallback por error de parseo' } });
+      } catch (e) {
+        console.error('Error parsing JSON:', e);
+        return res.status(200).json({ mixData: { transitionType: 'smooth', fadeDuration: 5000, rationale: 'Fallback' } });
       }
     }
 
