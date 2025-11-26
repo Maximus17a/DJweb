@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 import { useAuth } from './AuthContext';
 import { PLAYER_CONFIG, AI_CONFIG } from '../utils/constants';
 import { optimizeQueue } from '../utils/bpmMatcher';
-import { getMultipleAudioFeatures, getRecommendations } from '../services/spotifyApi'; // Importamos recomendaciones
+import { getRecommendations } from '../services/spotifyApi'; // Importamos recomendaciones
 
 const PlayerContext = createContext(null);
 
@@ -267,23 +267,64 @@ export function PlayerProvider({ children }) {
     if (queue.length === 0 && tracks.length > 0) playTrack(tracks[0]);
   };
 
+  /**
+   * Optimizar cola con IA (Estimación por Groq)
+   */
   const optimizeQueueWithAI = async (flowType = 'maintain') => {
     if (queue.length <= 1) return;
+    
     try {
       setIsOptimizing(true);
-      const trackIds = queue.map(track => track.id);
-      let features = await getMultipleAudioFeatures(trackIds) || [];
-      const tracksWithFeatures = queue.map((track, index) => ({
-        ...track,
-        audioFeatures: features[index] || { tempo: 0, energy: 0, key: 0, mode: 1, danceability: 0 },
+      
+      // 1. Preparamos la lista de canciones para enviársela a la IA
+      // Solo enviamos nombre y artista, que es lo que la IA necesita para "recordar" la canción
+      const tracksToAnalyze = queue.map(t => ({
+        id: t.id,
+        name: t.name,
+        artist: t.artists?.[0]?.name || 'Unknown'
       }));
+
+      console.log('🤖 Pidiendo a la IA que analice musicalmente', tracksToAnalyze.length, 'canciones...');
+
+      // 2. Llamamos a nuestra API de Groq en modo "analyze_tracks"
+      const response = await fetch('/api/ai_groq', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          mode: 'analyze_tracks', 
+          tracks: tracksToAnalyze 
+        })
+      });
+
+      const { features } = await response.json();
+      console.log('📊 Datos musicales recibidos de la IA:', features);
+
+      // 3. Inyectamos los datos estimados en los tracks
+      const tracksWithFeatures = queue.map((track) => {
+        const aiData = features[track.id] || { tempo: 120, energy: 0.5, key: 0 };
+        return {
+          ...track,
+          audioFeatures: {
+            tempo: aiData.tempo || 120,
+            energy: aiData.energy || 0.5,
+            key: aiData.key || 0,
+            mode: 1,
+            danceability: aiData.energy || 0.5 // Estimamos danceability con energía
+          }
+        };
+      });
+      
+      // 4. Ordenamos usando el algoritmo local (ahora con datos llenos)
       const optimized = optimizeQueue(tracksWithFeatures, flowType);
+      
       setQueue(optimized);
       setIsOptimizing(false);
+      
       return optimized;
     } catch (error) {
+      console.error('Error optimizing queue with AI:', error);
       setIsOptimizing(false);
-      throw error;
+      // No lanzamos error para que la app no se rompa, solo avisamos en consola
     }
   };
 
