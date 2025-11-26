@@ -6,9 +6,8 @@ import SearchBar from '../components/Library/SearchBar';
 import WebPlayback from '../components/Player/WebPlayback';
 import QueueManager from '../components/AI/QueueManager';
 import AIChat from '../components/AI/AIChat';
+import Recommendations from '../components/Library/Recommendations'; // <--- 1. IMPORTAR
 import { usePlayer } from '../context/PlayerContext';
-// Eliminamos la importación de getAudioFeatures porque ya no la usaremos
-// import { getAudioFeatures } from '../services/spotifyApi'; 
 
 export default function Dashboard() {
   const { addToQueue } = usePlayer();
@@ -17,11 +16,9 @@ export default function Dashboard() {
   const handleTrackSelect = async (track) => {
     try {
       let trackWithFeatures = { ...track };
-      
-      // CAMBIO: Ya no pedimos datos a Spotify para evitar el error 403.
-      // Asignamos valores base. La IA (Groq) los calculará si le damos a "Optimizar".
+      // Asignamos valores base (se rellenarán con IA al optimizar)
       trackWithFeatures.audioFeatures = {
-        tempo: 0,        // Se mostrará como 0 BPM hasta que la IA lo analice
+        tempo: 0,
         energy: 0,
         key: 0,
         mode: 1,
@@ -30,7 +27,6 @@ export default function Dashboard() {
 
       await addToQueue(trackWithFeatures);
       
-      // Mostrar notificación
       setNotification(`"${track.name}" añadida a la cola`);
       setTimeout(() => setNotification(null), 3000);
     } catch (error) {
@@ -47,7 +43,7 @@ export default function Dashboard() {
 
       <main className="container mx-auto px-4 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Columna izquierda: Búsqueda y Cola */}
+          {/* Columna izquierda: Búsqueda, Chat y Cola */}
           <div className="lg:col-span-2 space-y-6">
             {/* Búsqueda */}
             <div className="glass rounded-xl p-6">
@@ -65,10 +61,15 @@ export default function Dashboard() {
             <QueueManager />
           </div>
 
-          {/* Columna derecha: Reproductor */}
+          {/* Columna derecha: Reproductor y RECOMENDACIONES */}
           <div className="lg:col-span-1">
-            <div className="sticky top-8">
+            <div className="sticky top-8 space-y-6"> {/* Añadido space-y-6 para separar */}
+              
               <WebPlayback />
+              
+              {/* --- AQUÍ ESTÁ EL NUEVO COMPONENTE --- */}
+              <Recommendations />
+              
             </div>
           </div>
         </div>

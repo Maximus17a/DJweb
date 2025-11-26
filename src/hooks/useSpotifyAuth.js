@@ -1,5 +1,4 @@
-// src/hooks/useSpotifyAuth.js
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react'; // <--- Importar useCallback
 import { SPOTIFY_CONFIG, STORAGE_KEYS } from '../utils/constants';
 import { generateCodeVerifier, generateCodeChallenge, saveCodeVerifier, getCodeVerifier, clearCodeVerifier } from '../utils/pkce';
 
@@ -9,22 +8,19 @@ export function useSpotifyAuth() {
   const [user, setUser] = useState(null);
   const [error, setError] = useState(null);
   
-  // Mantener token en memoria para acceso rápido
   const tokenRef = useRef(localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN));
 
   useEffect(() => {
-    // Al cargar, verificar si tenemos tokens en localStorage
     const token = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
     const expiry = localStorage.getItem(STORAGE_KEYS.TOKEN_EXPIRY);
     
     if (token && expiry && Date.now() < parseInt(expiry)) {
       tokenRef.current = token;
       setIsAuthenticated(true);
-      // Cargar usuario desde localStorage si existe
       const savedUser = localStorage.getItem('spotify_user_profile');
       if (savedUser) setUser(JSON.parse(savedUser));
     } else {
-      logout(); // Limpiar si expiró
+      logout();
     }
     setIsLoading(false);
   }, []);
@@ -32,12 +28,10 @@ export function useSpotifyAuth() {
   const login = async () => {
     try {
       setIsLoading(true);
-      // 1. Generar PKCE
       const verifier = generateCodeVerifier();
       saveCodeVerifier(verifier);
       const challenge = await generateCodeChallenge(verifier);
 
-      // 2. Construir URL de Spotify
       const params = new URLSearchParams({
         response_type: 'code',
         client_id: SPOTIFY_CONFIG.CLIENT_ID,
@@ -47,7 +41,6 @@ export function useSpotifyAuth() {
         code_challenge: challenge,
       });
 
-      // 3. Redirigir al usuario
       window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
     } catch (err) {
       console.error('Login error:', err);
@@ -68,7 +61,6 @@ export function useSpotifyAuth() {
       const verifier = getCodeVerifier();
       if (!verifier) throw new Error('No PKCE verifier found');
 
-      // 4. Intercambiar código por tokens en NUESTRO backend
       const response = await fetch('/api/spotify/exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,11 +77,10 @@ export function useSpotifyAuth() {
       }
 
       const data = await response.json();
-
-      // 5. Guardar sesión en LocalStorage (¡CRÍTICO para persistencia!)
       const expiryTime = Date.now() + (data.expires_in * 1000);
+      
       localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
-      localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token); // El backend debe devolver esto
+      localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token);
       localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRY, expiryTime);
       localStorage.setItem('spotify_user_profile', JSON.stringify(data.profile));
 
@@ -118,7 +109,10 @@ export function useSpotifyAuth() {
     setUser(null);
   };
 
-  const getAccessToken = () => tokenRef.current;
+  // SOLUCIÓN: useCallback para que la referencia no cambie
+  const getAccessToken = useCallback(() => {
+    return tokenRef.current;
+  }, []);
 
   return {
     isAuthenticated,

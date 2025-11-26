@@ -225,8 +225,14 @@ export function PlayerProvider({ children }) {
 
   // --- INICIALIZACIÓN DEL REPRODUCTOR Y EVENTOS ---
 
+  const isPlayerInitialized = useRef(false);
+
   useEffect(() => {
-    if (!isAuthenticated) return;
+    // Si no está autenticado O ya se inicializó, no hacer nada
+    if (!isAuthenticated || isPlayerInitialized.current) return;
+
+    // Marcar como inicializado inmediatamente
+    isPlayerInitialized.current = true;
 
     const script = document.createElement('script');
     script.src = 'https://sdk.scdn.co/spotify-player.js';
@@ -241,36 +247,29 @@ export function PlayerProvider({ children }) {
         volume: PLAYER_CONFIG.VOLUME,
       });
 
-      // Eventos de conexión
+      // ... (resto de listeners igual que antes: ready, not_ready, player_state_changed) ...
       spotifyPlayer.addListener('ready', ({ device_id }) => {
-        console.log('Ready with Device ID', device_id);
+        console.log('Ready:', device_id);
         setDeviceId(device_id);
       });
 
       spotifyPlayer.addListener('not_ready', ({ device_id }) => {
-        console.log('Device ID has gone offline', device_id);
+        console.log('Offline:', device_id);
       });
 
-      // EVENTO PRINCIPAL: CAMBIO DE ESTADO
       spotifyPlayer.addListener('player_state_changed', (state) => {
         if (!state) return;
-
-        // Actualizar estado local
         setCurrentTrack(state.track_window.current_track);
         setIsPaused(state.paused);
         setPosition(state.position);
         setDuration(state.duration);
 
-        // --- DETECTOR DE FIN DE CANCIÓN ---
-        // Si la canción se está reproduciendo y faltan menos de 2 segundos...
         if (!state.paused && 
             state.position > 0 && 
             state.duration > 0 && 
             (state.duration - state.position) < 2000) {
             
-            // ... y NO estamos procesando ya un cambio...
             if (!isProcessingRef.current) {
-               // ... ¡ACTIVAMOS EL DJ!
                handleTrackEnd();
             }
         }
@@ -280,8 +279,14 @@ export function PlayerProvider({ children }) {
       setPlayer(spotifyPlayer);
       playerRef.current = spotifyPlayer;
     };
-  }, [isAuthenticated, getAccessToken, handleTrackEnd]); // Añadimos handleTrackEnd a deps
 
+    // Cleanup: Desconectar solo si el componente se desmonta realmente
+    return () => { 
+        // Nota: En desarrollo, React desmonta y monta. 
+        // Para evitar problemas con el SDK, a veces es mejor no desconectar en cleanup
+        // o manejarlo con cuidado.
+    };
+  }, [isAuthenticated, getAccessToken, handleTrackEnd]);
   // Intervalo para UI fluida (barra de progreso)
   useEffect(() => {
     if (!isPaused && player) {
